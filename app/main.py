@@ -6,7 +6,7 @@ from app.config import settings
 from app.database import init_db
 from app.stream.router import router as stream_router
 from app.dashboard import router as dashboard_router
-from app.telegram.client import stop_client
+from app.telegram.client import stop_client, init_bot_pool
 from app.telegram.monitor import start_monitor
 from app.stream.prefetch import prefetch_manager
 from app.proxy.singbox import (
@@ -88,6 +88,12 @@ async def lifespan(app: FastAPI):
         logger.info("Telegram monitor started")
     except Exception as e:
         logger.warning(f"Telegram monitor failed to start: {e}")
+
+    logger.info("Initializing bot pool...")
+    try:
+        await init_bot_pool()
+    except Exception as e:
+        logger.warning(f"Bot pool initialization failed: {e}")
 
     yield
 

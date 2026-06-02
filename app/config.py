@@ -18,12 +18,19 @@ class TelegramSettings(BaseSettings):
     session_string: str = Field(default="", alias="TELEGRAM_SESSION_STRING")
     channel_id: int = Field(default=0, alias="TELEGRAM_CHANNEL_ID")
     monitor_channels: str = Field(default="", alias="TELEGRAM_MONITOR_CHANNELS")
+    bot_tokens: str = Field(default="", alias="TELEGRAM_BOT_TOKENS")
 
     @property
     def monitor_channel_list(self) -> list[int]:
         if not self.monitor_channels:
             return []
         return [int(c.strip()) for c in self.monitor_channels.split(",") if c.strip()]
+
+    @property
+    def bot_token_list(self) -> list[str]:
+        if not self.bot_tokens:
+            return []
+        return [t.strip() for t in self.bot_tokens.split(",") if t.strip()]
 
     class Config:
         env_prefix = "TELEGRAM_"
@@ -69,7 +76,10 @@ class StreamSettings(BaseSettings):
     port: int = Field(default=8000, alias="STREAM_PORT")
     base_url: str = Field(default="http://localhost:8000", alias="BASE_URL")
     local_url: str = Field(default="http://localhost:8000", alias="STREAM_LOCAL_URL")
-    chunk_size: int = 1048576  # 1MB
+    chunk_size: int = 1048576
+    concurrency: int = Field(default=3, alias="STREAM_CONCURRENCY")
+    max_retries: int = Field(default=3, alias="STREAM_MAX_RETRIES")
+    retry_delay: float = Field(default=2.0, alias="STREAM_RETRY_DELAY")
 
     class Config:
         populate_by_name = True

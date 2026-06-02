@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from app.config import settings
 from app.database import async_session
 from app.models import Media
-from app.telegram.client import get_client
+from app.telegram.client import get_client, get_stream_client
 from app.stream.range_stream import CachedFileDownloader
 from app.stream.cache import cache
 from app.stream.prefetch import prefetch_manager
@@ -79,7 +79,7 @@ async def serve_stream(
     request: Request,
 ):
     client = await get_client()
-    downloader = CachedFileDownloader(client, chat_id, message_id)
+    downloader = CachedFileDownloader(get_stream_client() or client, chat_id, message_id)
 
     if file_size is None:
         try:

@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from pyrogram import Client
 from app.config import settings
 import logging
@@ -5,6 +7,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 _client: Client | None = None
+_bot_pool: list[Client] = []
+_bot_index: int = 0
+_bot_lock = threading.Lock()
 
 
 def _get_proxy() -> dict | None:
@@ -52,6 +57,44 @@ async def get_client() -> Client:
     return _client
 
 
+async def init_bot_pool():
+    global _bot_pool
+    tokens = settings.telegram.bot_token_list
+    if not tokens:
+        logger.info("No bot tokens configured, bot pool disabled")
+        return
+
+    proxy = _get_proxy()
+    for i, token in enumerate(tokens):
+        try:
+            bot = Client(
+                name=f"tg_bot_{i}",
+                api_id=settings.telegram.api_id,
+                api_hash=settings.telegram.api_hash,
+                bot_token=token,
+                proxy=proxy,
+                in_memory=True,
+            )
+            await bot.start()
+            _bot_pool.append(bot)
+            logger.info(f"Bot #{i} started successfully")
+        except Exception as e:
+            logger.error(f"Failed to start bot #{i}: {e}")
+
+    if _bot_pool:
+        logger.info(f"Bot pool initialized with {len(_bot_pool)} bots")
+
+
+def get_stream_client() -> Client:
+    global _bot_index
+    if _bot_pool:
+        with _bot_lock:
+            idx = _bot_index % len(_bot_pool)
+            _bot_index += 1
+        return _bot_pool[idx]
+    return _client
+
+
 async def warmup_client(client: Client):
     count = 0
     async for _ in client.get_dialogs():
@@ -60,10 +103,18 @@ async def warmup_client(client: Client):
 
 
 async def stop_client():
-    global _client
+    global _client, _bot_pool
     if _client:
         try:
             await _client.stop()
         except Exception:
             pass
         _client = None
+
+    for bot in _bot_pool:
+        try:
+            await bot.stop()
+        except Exception:
+            pass
+    _bot_pool.clear()
+    logger.info("All clients stopped")
