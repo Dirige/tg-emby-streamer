@@ -7,6 +7,14 @@
 
 ---
 
+## ⚠️ GitHub 访问问题
+
+如果无法访问 GitHub，可以尝试：
+- 使用镜像站点：`https://ghproxy.com/`
+- 参考 [DEPLOY.md](DEPLOY.md) 了解详细解决方案
+
+---
+
 ## 功能特性
 
 | 功能 | 说明 |

@@ -4,6 +4,42 @@
 
 ---
 
+## ⚠️ GitHub 访问问题
+
+如果无法访问 GitHub 或 raw.githubusercontent.com，可以尝试以下方法：
+
+### 方法一：使用代理或 VPN
+
+配置系统代理后访问：
+```bash
+export https_proxy=http://你的代理地址:端口
+```
+
+### 方法二：使用镜像站点
+
+国内可使用以下镜像站点：
+- https://ghproxy.com/https://github.com/Dirige/tg-emby-streamer/raw/main/docker-compose.yml
+- https://mirror.ghproxy.com/https://raw.githubusercontent.com/Dirige/tg-emby-streamer/main/docker-compose.yml
+
+示例：
+```bash
+# 使用镜像下载配置文件
+wget https://ghproxy.com/https://raw.githubusercontent.com/Dirige/tg-emby-streamer/main/docker-compose.yml
+wget https://ghproxy.com/https://raw.githubusercontent.com/Dirige/tg-emby-streamer/main/.env.example
+```
+
+### 方法三：使用 Docker Hub 镜像（推荐）
+
+如果 GitHub 访问困难，可以等待镜像同步到 Docker Hub（未来计划支持）。
+
+### 方法四：手动下载
+
+1. 访问 https://github.com/Dirige/tg-emby-streamer
+2. 点击 "Code" → "Download ZIP"
+3. 解压后在目录内操作
+
+---
+
 ## 目录
 
 - [环境要求](#环境要求)

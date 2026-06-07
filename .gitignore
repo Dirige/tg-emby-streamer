@@ -8,7 +8,6 @@ __pycache__/
 data/
 cache/
 strm/
-media/
 *.egg-info/
 dist/
 build/
