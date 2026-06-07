@@ -11,10 +11,10 @@
 *.session
 
 # Data directories
-data/
-cache/
-strm/
-media/
+/data/
+/cache/
+/strm/
+/media/
 
 # sing-box binaries and logs
 sing-box/sing-box
