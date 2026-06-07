@@ -251,6 +251,13 @@ CAPTION_ONLY_CHANNELS=-100xxxxxxxxxx
 这样会从消息 caption 中提取标题。
 </details>
 
+## 致谢
+
+- [LINUX DO](https://linux.do) — 提供开源推广平台，感谢社区佬友的支持与建议
+- [Pyrogram](https://github.com/pyrogram/pyrogram) — Telegram MTProto 客户端库
+- [FastAPI](https://github.com/tiangolo/fastapi) — Web 框架
+- [sing-box](https://github.com/SagerNet/sing-box) — 代理工具
+
 ## 许可证
 
 MIT License
