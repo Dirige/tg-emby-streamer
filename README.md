@@ -27,8 +27,6 @@ TG Emby Streamer automatically monitors Telegram channels for video content, gen
 ```
 Emby/Jellyfin
     ↓
-Cloudflare Worker (optional, CDN/auth)
-    ↓
 FastAPI Stream Server (HTTP Range)
     ↓
 sing-box / External Proxy (SOCKS5)
@@ -93,8 +91,6 @@ TG Emby Streamer 自动监听 Telegram 频道的视频内容，为 Emby/Jellyfin
 
 ```
 Emby/Jellyfin
-    ↓
-Cloudflare Worker (可选，CDN/鉴权)
     ↓
 FastAPI 流媒体服务器 (HTTP Range)
     ↓
