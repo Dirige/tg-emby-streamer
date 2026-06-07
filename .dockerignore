@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+
+# Environment files (MUST NOT be in Docker image)
+.env
+.env.*
+!.env.example
+
+# Session files
+*.session
+
+# Data directories
+data/
+cache/
+strm/
+media/
+
+# sing-box binaries and logs
+sing-box/sing-box
+sing-box/sing-box.exe
+sing-box/*.log
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.eggs
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.yml
+Dockerfile
+
+# Docs
+README.md
+DEPLOY.md
+LICENSE

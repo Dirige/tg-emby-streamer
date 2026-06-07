@@ -1,0 +1,22 @@
+services:
+  stream-server:
+    build: .
+    container_name: tg-emby-streamer
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/app/data
+      - ./cache:/app/cache
+      - ./media:/app/media
+      - ./strm:/app/strm
+      - ./sing-box:/app/sing-box
+      - ./.env:/app/.env:ro
+    env_file:
+      - .env
+    networks:
+      - tg-emby
+
+networks:
+  tg-emby:
+    driver: bridge
