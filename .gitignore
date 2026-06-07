@@ -21,7 +21,8 @@ env/
 .vscode/
 *.swp
 *.swo
-sing-box/
+sing-box/*.exe
+sing-box/*.log
 xray/
 *.log
 *.db
