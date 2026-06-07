@@ -40,6 +40,23 @@
 
 ## 快速开始
 
+### Docker 部署（推荐）
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/Dirige/tg-emby-streamer.git
+cd tg-emby-streamer
+
+# 2. 配置
+cp .env.example .env
+# 编辑 .env 填入你的配置（详见下方配置说明）
+
+# 3. 启动服务
+docker-compose up -d
+```
+
+### 本地部署
+
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/Dirige/tg-emby-streamer.git
@@ -58,6 +75,21 @@ python generate_session.py
 # 5. 启动
 python run.py
 ```
+
+### sing-box 代理配置
+
+项目内置 sing-box 代理支持，配置文件位于 `sing-box/config.json`。
+
+**下载 sing-box：**
+- 官方下载：https://github.com/SagerNet/sing-box/releases
+- Windows: `sing-box-windows-amd64.exe`
+- Linux: `sing-box-linux-amd64`
+
+**使用方法：**
+1. 下载对应平台的 sing-box 可执行文件
+2. 放入 `sing-box/` 目录
+3. 编辑 `sing-box/config.json` 配置你的代理节点
+4. 在 `.env` 中设置 `SINGBOX_ENABLED=true`
 
 > 详细部署教程请参阅 **[DEPLOY.md](DEPLOY.md)**
 

@@ -192,6 +192,17 @@ CAPTION_ONLY_CHANNELS=-1005555555555
 
 #### 模式一：sing-box（推荐，国内服务器）
 
+**1. 下载 sing-box**
+
+从 GitHub Releases 下载对应平台的可执行文件：
+- https://github.com/SagerNet/sing-box/releases
+
+**2. 配置 sing-box**
+
+编辑 `sing-box/config.json`，配置你的代理节点信息。
+
+**3. 环境变量配置**
+
 ```env
 SINGBOX_ENABLED=true
 SINGBOX_ADDRESS=你的服务器地址
