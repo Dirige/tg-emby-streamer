@@ -1,3 +1,9 @@
+import asyncio
+import sys
+
+if sys.version_info >= (3, 14):
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 import uvicorn
 from app.config import settings
 

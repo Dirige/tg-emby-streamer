@@ -29,6 +29,8 @@ _health_failures: int = 0
 _max_health_failures: int = 3
 _last_health_check: float = 0
 _is_healthy: bool = False
+_atexit_registered: bool = False
+_process_lock = threading.Lock()
 
 
 def _get_download_info() -> tuple[str, str]:
@@ -127,12 +129,15 @@ def generate_config(
     vless_tls: bool = True,
     vless_fp: str = "chrome",
     socks_port: int = 10808,
+    protocol: str = "vless",
+    cipher: str = "auto",
 ) -> str:
     server_name = vless_host if vless_host else vless_address
 
     tls_settings = {
         "enabled": vless_tls,
-        "server_name": server_name,
+        "server_name": server_name if server_name else "",
+        "insecure": True,
         "utls": {
             "enabled": True,
             "fingerprint": vless_fp,
@@ -146,6 +151,55 @@ def generate_config(
             "Host": vless_host if vless_host else vless_address,
         },
     }
+
+    if protocol == "vless":
+        outbound = {
+            "type": "vless",
+            "tag": "proxy",
+            "server": vless_address,
+            "server_port": vless_port,
+            "uuid": vless_uuid,
+            "flow": "",
+            "network": "tcp",
+            "tls": tls_settings,
+            "transport": transport_settings,
+        }
+    elif protocol == "trojan":
+        outbound = {
+            "type": "trojan",
+            "tag": "proxy",
+            "server": vless_address,
+            "server_port": vless_port,
+            "password": vless_uuid,
+            "network": "tcp",
+            "tls": tls_settings,
+            "transport": transport_settings,
+        }
+    elif protocol == "vmess":
+        outbound = {
+            "type": "vmess",
+            "tag": "proxy",
+            "server": vless_address,
+            "server_port": vless_port,
+            "uuid": vless_uuid,
+            "alter_id": 0,
+            "security": "auto",
+            "network": "tcp",
+            "tls": tls_settings,
+            "transport": transport_settings,
+        }
+    elif protocol == "shadowsocks":
+        outbound = {
+            "type": "shadowsocks",
+            "tag": "proxy",
+            "server": vless_address,
+            "server_port": vless_port,
+            "method": cipher,
+            "password": vless_uuid,
+            "network": "tcp",
+        }
+    else:
+        raise ValueError(f"Unsupported protocol: {protocol}")
 
     config = {
         "log": {
@@ -162,16 +216,7 @@ def generate_config(
             }
         ],
         "outbounds": [
-            {
-                "type": "vless",
-                "tag": "proxy",
-                "server": vless_address,
-                "server_port": vless_port,
-                "uuid": vless_uuid,
-                "network": "tcp",
-                "tls": tls_settings,
-                "transport": transport_settings,
-            },
+            outbound,
             {
                 "type": "direct",
                 "tag": "direct",
@@ -304,24 +349,17 @@ def _check_socks5_health(port: int, timeout: float = 5.0) -> bool:
 
 def _check_telegram_health(port: int) -> bool:
     try:
-        import socks
-        import urllib.request
+        import socks as socks_mod
+        import ssl
 
-        old_socket = socket.socket
-        socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", port)
-        socket.socket = socks.socksocket
-        try:
-            req = urllib.request.Request(
-                "https://api.telegram.org/bot123:fake/getMe",
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            resp = urllib.request.urlopen(req, timeout=10)
-            resp.read()
-            return True
-        except Exception:
-            return True
-        finally:
-            socket.socket = old_socket
+        s = socks_mod.socksocket()
+        s.set_proxy(socks_mod.SOCKS5, "127.0.0.1", port)
+        s.settimeout(10)
+        s.connect(("api.telegram.org", 443))
+        ctx = ssl.create_default_context()
+        ss = ctx.wrap_socket(s, server_hostname="api.telegram.org")
+        ss.close()
+        return True
     except ImportError:
         return _check_socks5_health(port)
     except Exception:
@@ -404,22 +442,26 @@ def _monitor_loop():
 def start(socks_port: int = 10808) -> int:
     global _process, _monitor_thread, _current_port, _restart_count, _health_failures, _is_healthy
 
-    if _process is not None and _process.poll() is None:
-        logger.info("sing-box already running")
-        return socks_port
+    with _process_lock:
+        if _process is not None and _process.poll() is None:
+            logger.info("sing-box already running")
+            return socks_port
 
-    _current_port = socks_port
-    _restart_count = 0
-    _health_failures = 0
+        _current_port = socks_port
+        _restart_count = 0
+        _health_failures = 0
 
-    _process = _start_process(socks_port)
-    _is_healthy = True
+        _process = _start_process(socks_port)
+        _is_healthy = True
 
     _stop_monitor.clear()
     _monitor_thread = threading.Thread(target=_monitor_loop, daemon=True, name="singbox-monitor")
     _monitor_thread.start()
 
-    atexit.register(stop)
+    global _atexit_registered
+    if not _atexit_registered:
+        atexit.register(stop)
+        _atexit_registered = True
 
     def _signal_handler(sig, frame):
         stop()
@@ -441,17 +483,31 @@ def stop():
         _monitor_thread.join(timeout=10)
         _monitor_thread = None
 
-    if _process is not None:
-        try:
-            _process.terminate()
-            _process.wait(timeout=5)
-        except Exception:
+    with _process_lock:
+        if _process is not None:
             try:
-                _process.kill()
+                _process.terminate()
+                _process.wait(timeout=5)
             except Exception:
-                pass
-        _process = None
-        logger.info("sing-box stopped")
+                try:
+                    _process.kill()
+                except Exception:
+                    pass
+            _process = None
+
+    # Kill any remaining sing-box processes
+    try:
+        import subprocess
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/f", "/im", "sing-box.exe"], 
+                         capture_output=True, timeout=5)
+        else:
+            subprocess.run(["pkill", "-f", "sing-box"], 
+                         capture_output=True, timeout=5)
+    except Exception:
+        pass
+    
+    logger.info("sing-box stopped")
 
 
 def is_running() -> bool:

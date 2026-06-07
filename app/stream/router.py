@@ -10,7 +10,7 @@ from app.telegram.client import get_client, get_stream_client
 from app.stream.range_stream import CachedFileDownloader
 from app.stream.cache import cache
 from app.stream.prefetch import prefetch_manager
-from sqlalchemy import select, and_
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -49,27 +49,6 @@ async def get_media_record(message_id: int) -> Media | None:
         return result.scalar_one_or_none()
 
 
-async def find_media_by_tmdb(
-    tmdb_id: str,
-    category: str,
-    title: str,
-    season: int | None = None,
-    episode: int | None = None,
-) -> Media | None:
-    async with async_session() as session:
-        conditions = [
-            Media.tmdb_id == tmdb_id,
-            Media.category == category,
-        ]
-        if category == "tv":
-            if season is not None:
-                conditions.append(Media.season == season)
-            if episode is not None:
-                conditions.append(Media.episode == episode)
-        result = await session.execute(select(Media).where(and_(*conditions)))
-        return result.scalar_one_or_none()
-
-
 async def serve_stream(
     message_id: int,
     chat_id: int,
@@ -78,8 +57,9 @@ async def serve_stream(
     mime_type: str,
     request: Request,
 ):
-    client = await get_client()
-    downloader = CachedFileDownloader(get_stream_client() or client, chat_id, message_id)
+    stream_client = get_stream_client()
+    client = stream_client if stream_client else await get_client()
+    downloader = CachedFileDownloader(client, chat_id, message_id)
 
     if file_size is None:
         try:
@@ -160,73 +140,6 @@ async def stream_by_message_id(message_id: int, request: Request):
         )
 
 
-@router.get("/strm/movie/{title}-tmdb_{tmdb_id}")
-async def stream_movie(title: str, tmdb_id: str, request: Request):
-    try:
-        record = await find_media_by_tmdb(tmdb_id, category="movie", title=title)
-        if not record:
-            raise HTTPException(
-                status_code=404, detail=f"Movie not found: {title} (tmdb={tmdb_id})"
-            )
-
-        return await serve_stream(
-            record.message_id,
-            int(record.chat_id),
-            record.size,
-            record.file_name or f"{record.message_id}.mp4",
-            record.mime_type or "video/mp4",
-            request,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Stream error for movie {title} tmdb={tmdb_id}: {type(e).__name__}: {e}"
-        )
-        raise HTTPException(
-            status_code=500, detail=f"Stream error: {type(e).__name__}: {e}"
-        )
-
-
-@router.get(
-    "/strm/tv/{title}/S{season:02d}E{episode:02d}-tmdb_{tmdb_id}"
-)
-async def stream_tv(
-    title: str, season: int, episode: int, tmdb_id: str, request: Request
-):
-    try:
-        record = await find_media_by_tmdb(
-            tmdb_id, category="tv", title=title, season=season, episode=episode
-        )
-        if not record:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"Episode not found: {title} S{season:02d}E{episode:02d}"
-                    f" (tmdb={tmdb_id})"
-                ),
-            )
-
-        return await serve_stream(
-            record.message_id,
-            int(record.chat_id),
-            record.size,
-            record.file_name or f"{record.message_id}.mp4",
-            record.mime_type or "video/mp4",
-            request,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Stream error for {title} S{season}E{episode} tmdb={tmdb_id}:"
-            f" {type(e).__name__}: {e}"
-        )
-        raise HTTPException(
-            status_code=500, detail=f"Stream error: {type(e).__name__}: {e}"
-        )
-
-
 @router.head("/strm/{message_id}")
 @router.head("/stream/{message_id}")
 async def stream_head(message_id: int):
@@ -235,12 +148,14 @@ async def stream_head(message_id: int):
         if record and record.size:
             file_size = record.size
             mime_type = record.mime_type or "video/mp4"
+            file_name = record.file_name or f"{message_id}.mp4"
         else:
             chat_id = settings.telegram.channel_id
             client = await get_client()
-            downloader = CachedFileDownloader(client, chat_id, message_id)
+            downloader = CachedFileDownloader(get_stream_client() or client, chat_id, message_id)
             file_size = await downloader.get_file_size()
             mime_type = "video/mp4"
+            file_name = f"{message_id}.mp4"
 
         return Response(
             status_code=200,
@@ -248,6 +163,9 @@ async def stream_head(message_id: int):
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(file_size),
                 "Content-Type": mime_type,
+                "Content-Disposition": (
+                    f"inline; filename*=UTF-8''{quote(file_name)}"
+                ),
             },
         )
     except Exception as e:
