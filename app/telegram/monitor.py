@@ -3,7 +3,7 @@ import logging
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from app.config import settings
-from app.database import async_session
+from app.database import async_session, adult_session
 from app.models import Media
 from sqlalchemy import select
 from app.media.parser import parse_media_info
@@ -81,6 +81,7 @@ async def process_private_channel_message(message: Message, source_channel_id: i
         title=media_info.get("title"),
         season=media_info.get("season"),
         episode=media_info.get("episode"),
+        display_name=media_info.get("display_name"),
     )
 
     async with async_session() as session:
@@ -103,6 +104,7 @@ async def process_private_channel_message(message: Message, source_channel_id: i
             width=width,
             height=height,
             category=media_info.get("category"),
+            display_name=media_info.get("display_name") or media_info.get("title"),
             season=media_info.get("season"),
             episode=media_info.get("episode"),
             resolution=media_info.get("resolution"),
@@ -217,7 +219,11 @@ async def _direct_record_message(message: Message, source_channel_id: int, media
         display_name=media_info.get("display_name"),
     )
 
-    async with async_session() as session:
+    # 根据频道 ID 选择使用主数据库还是 18+ 数据库
+    is_adult = source_channel_id in settings.telegram.adult_channel_list
+    db_session = adult_session if is_adult else async_session
+
+    async with db_session() as session:
         result = await session.execute(select(Media).where(Media.message_id == message.id))
         existing = result.scalar_one_or_none()
         if existing:
@@ -236,6 +242,7 @@ async def _direct_record_message(message: Message, source_channel_id: int, media
             width=width,
             height=height,
             category=media_info.get("category"),
+            display_name=media_info.get("display_name") or media_info.get("title"),
             season=media_info.get("season"),
             episode=media_info.get("episode"),
             resolution=media_info.get("resolution"),

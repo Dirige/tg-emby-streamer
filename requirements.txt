@@ -1,15 +1,11 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pyrogram==2.0.106
-
 aiohttp==3.10.5
-aiofiles==24.1.0
 sqlalchemy==2.0.35
 greenlet>=3.0.0
 aiosqlite==0.20.0
-guessit==3.8.0
 pydantic==2.9.2
 pydantic-settings==2.5.2
 python-dotenv==1.0.1
-pyyaml==6.0.2
 pysocks==1.7.1

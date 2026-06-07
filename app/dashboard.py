@@ -12,7 +12,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from app.config import settings, BASE_DIR
-from app.database import async_session
+from app.database import async_session, adult_session
 from app.models import Media
 from app.media.parser import parse_media_info
 from app.media.strm import remove_old_strm
@@ -24,6 +24,7 @@ from app.proxy.singbox import (
     is_running as is_singbox_running,
 )
 from app.telegram.client import get_sub_nodes, get_current_node_idx, select_sub_node, get_proxy_mode
+from app.telegram.monitor import _direct_record_message
 from sqlalchemy import select, delete
 
 logger = logging.getLogger(__name__)
@@ -386,7 +387,8 @@ async def select_node(request: Request):
 @router.get("/api/media")
 async def list_media(page: int = 1, page_size: int = 20, category: str = ""):
     async with async_session() as session:
-        base_query = select(Media).where(Media.recognized == True)
+        # 排除 18+ 内容，18+ 内容在 /api/adult 页面显示
+        base_query = select(Media).where(Media.recognized == True).where(Media.category != "cosplay")
         if category:
             base_query = base_query.where(Media.category == category)
 
@@ -402,7 +404,7 @@ async def list_media(page: int = 1, page_size: int = 20, category: str = ""):
     items = [{
         "id": r.id, "message_id": r.message_id, "chat_id": r.chat_id,
         "file_name": r.file_name, "size": r.size, "duration": r.duration,
-        "mime_type": r.mime_type, "category": r.category,
+        "mime_type": r.mime_type, "category": r.category, "tmdb_id": None,
         "display_name": r.display_name, "season": r.season, "episode": r.episode,
         "resolution": r.resolution, "strm_path": r.strm_path,
         "created_at": str(r.created_at) if r.created_at else None,
@@ -425,7 +427,7 @@ async def list_unrecognized(page: int = 1, page_size: int = 20):
     items = [{
         "id": r.id, "message_id": r.message_id, "chat_id": r.chat_id,
         "file_name": r.file_name, "size": r.size, "duration": r.duration,
-        "mime_type": r.mime_type, "category": r.category,
+        "mime_type": r.mime_type, "category": r.category, "tmdb_id": None,
         "display_name": r.display_name, "season": r.season, "episode": r.episode,
         "resolution": r.resolution, "strm_path": r.strm_path,
         "created_at": str(r.created_at) if r.created_at else None,
@@ -467,12 +469,12 @@ async def update_adult(request: Request):
     if not media_id:
         return {"success": False, "message": "缺少 id"}
     try:
-        async with async_session() as session:
+        async with adult_session() as session:
             record = await session.get(Media, media_id)
             if not record:
                 return {"success": False, "message": "记录不存在"}
-            if "display_name" in body:
-                record.display_name = body["display_name"]
+            if "tmdb_name" in body:
+                record.display_name = body["tmdb_name"]
             if "caption" in body:
                 record.caption = body["caption"]
             await session.commit()
@@ -797,15 +799,12 @@ async def scan_single_channel(request: Request):
                 media_info["category"] = forced_category
                 media_info["recognized"] = True
             
-            is_adult = channel_id in settings.telegram.adult_channel_list
-            strm_path = None
-            if not is_adult:
-                strm_path = generate_strm(
-                    message_id=message.id, file_name=file_name,
-                    category=media_info.get("category"), title=media_info.get("title"),
-                    season=media_info.get("season"), episode=media_info.get("episode"),
-                    display_name=media_info.get("display_name"),
-                )
+            strm_path = generate_strm(
+                message_id=message.id, file_name=file_name,
+                category=media_info.get("category"), title=media_info.get("title"),
+                season=media_info.get("season"), episode=media_info.get("episode"),
+                display_name=media_info.get("display_name"),
+            )
             
             async with async_session() as session:
                 record = Media(

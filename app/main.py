@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import settings
-from app.database import init_db
+from app.database import init_db, init_adult_db
 from app.stream.router import router as stream_router
 from app.dashboard import router as dashboard_router
 from app.telegram.client import stop_client, init_bot_pool, ensure_proxy
@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing database...")
     await init_db()
+    await init_adult_db()
 
     # 优先级：手动 VLESS 配置 > 外部代理 > 订阅自动代理
     if settings.singbox.enabled and settings.singbox.address:

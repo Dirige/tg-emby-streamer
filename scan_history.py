@@ -61,7 +61,7 @@ async def scan_private_channel(limit: int = 0):
             title=media_info.get("title"),
             season=media_info.get("season"),
             episode=media_info.get("episode"),
-            display_name=media_info.get("display_name"),
+            tmdb_id=media_info.get("tmdb_id"),
         )
 
         async with async_session() as session:
@@ -77,7 +77,8 @@ async def scan_private_channel(limit: int = 0):
                 width=media.width or 0,
                 height=media.height or 0,
                 category=media_info.get("category"),
-                display_name=media_info.get("display_name") or media_info.get("title"),
+                tmdb_id=media_info.get("tmdb_id"),
+                tmdb_name=media_info.get("title"),
                 season=media_info.get("season"),
                 episode=media_info.get("episode"),
                 resolution=media_info.get("resolution"),

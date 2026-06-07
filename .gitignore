@@ -1,53 +1,29 @@
-# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.env
+*.session
+*.session-journal
+data/
+cache/
+strm/
+media/
 *.egg-info/
 dist/
 build/
 .eggs/
 *.egg
-
-# Virtual environments
 .venv/
 venv/
 env/
-
-# Environment (SECRETS!)
-.env
-.env.*
-!.env.example
-
-# Session files (SECRETS!)
-*.session
-*.session-journal
-
-# Data directories
-data/
-cache/
-strm/
-media/
-
-# sing-box
-sing-box/
-
-# Logs
-*.log
-
-# Database
-*.db
-
-# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Misc
+sing-box/
+xray/
+*.log
+*.db
 chn_ip*.txt
 start.ps1

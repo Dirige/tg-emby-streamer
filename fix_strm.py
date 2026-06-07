@@ -31,10 +31,12 @@ async def fix_all():
             r.season = media_info.get("season")
             r.episode = media_info.get("episode")
             r.resolution = media_info.get("resolution")
-            if media_info.get("display_name"):
-                r.display_name = media_info.get("display_name")
+            if media_info.get("tmdb_id"):
+                r.tmdb_id = media_info.get("tmdb_id")
+            if media_info.get("tmdb_name"):
+                r.tmdb_name = media_info.get("tmdb_name")
             elif media_info.get("title"):
-                r.display_name = media_info.get("title")
+                r.tmdb_name = media_info.get("title")
 
             strm_path = generate_strm(
                 message_id=r.message_id,
@@ -43,7 +45,8 @@ async def fix_all():
                 title=media_info.get("title"),
                 season=media_info.get("season"),
                 episode=media_info.get("episode"),
-                display_name=media_info.get("display_name"),
+                tmdb_id=media_info.get("tmdb_id"),
+                tmdb_name=media_info.get("tmdb_name"),
             )
             r.strm_path = str(strm_path) if strm_path else None
             print(f"  [{r.message_id}] {file_name} -> {r.strm_path}")

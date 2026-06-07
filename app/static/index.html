@@ -228,7 +228,7 @@ label{font-size:12px;color:var(--text2);display:block;margin-bottom:4px;font-wei
     <div class="section-title">媒体库</div>
     <div class="btn-group">
       <input class="input" id="mediaSearch" placeholder="搜索文件名..." style="width:200px" oninput="filterMedia()">
-      <select class="input" id="mediaFilter" style="width:100px" onchange="mediaPage=1;loadMedia()"><option value="">全部</option><option value="tv">电视剧</option><option value="movie">电影</option><option value="anime">动漫</option><option value="dongman">动漫(东漫)</option><option value="cosplay">Cosplay</option><option value="variety">综艺</option><option value="documentary">纪录片</option></select>
+      <select class="input" id="mediaFilter" style="width:100px" onchange="mediaPage=1;loadMedia()"><option value="">全部</option><option value="tv">电视剧</option><option value="movie">电影</option><option value="anime">动漫</option><option value="dongman">动漫(东漫)</option><option value="variety">综艺</option><option value="documentary">纪录片</option></select>
       <select class="input" id="mediaPageSize" style="width:80px" onchange="mediaPage=1;loadMedia()"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select>
       <button class="btn primary" onclick="loadMedia()">刷新</button>
       <button class="btn warning" onclick="regenStrm()">重新生成STRM</button>
@@ -465,6 +465,11 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s; re
 function formatSize(b) { if (!b) return '-'; const u = ['B','KB','MB','GB','TB']; let i = 0, s = b; while (s >= 1024 && i < 4) { s /= 1024; i++; } return s.toFixed(i > 0 ? 1 : 0) + ' ' + u[i]; }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
+function tgLink(m) {
+  if (!m.chat_id || !m.message_id) return '';
+  const cid = String(m.chat_id).replace(/^-100/, '');
+  return `https://t.me/c/${cid}/${m.message_id}`;
+}
 
 function updateProtoFields() {
   const proto = document.getElementById('vlessProto').value;
@@ -813,12 +818,16 @@ function renderMedia(items) {
     const labels = {tv:'电视剧',movie:'电影',anime:'动漫',variety:'综艺',documentary:'纪录片',kids:'儿童',reality:'真人秀',drama:'剧情',action:'动作',scifi:'科幻',horror:'恐怖',romance:'爱情',comedy:'喜剧'};
     return `<span class="badge ${colors[c]||'gray'}">${labels[c]||c||'-'}</span>`;
   };
-  document.getElementById('mediaTable').innerHTML = `<table><tr><th><input type="checkbox" id="mediaSelectAll" onchange="toggleSelectAllMedia(this)"></th><th>MSG ID</th><th>文件名</th><th>大小</th><th>类型</th><th>分辨率</th><th>STRM</th><th>操作</th></tr>
-    ${items.map(m => `<tr><td><input type="checkbox" class="media-cb" value="${m.id}" onchange="updateBatchBtn()"></td><td>${m.message_id}</td><td title="${esc(m.file_name||'')}">${esc(m.file_name||'-')}</td><td>${formatSize(m.size)}</td>
+  document.getElementById('mediaTable').innerHTML = `<table><tr><th><input type="checkbox" id="mediaSelectAll" onchange="toggleSelectAllMedia(this)"></th><th>MSG ID</th><th>标题</th><th>大小</th><th>类型</th><th>分辨率</th><th>STRM</th><th>操作</th></tr>
+    ${items.map(m => {
+      const title = m.display_name || m.file_name || '-';
+      const titleShort = title.length > 40 ? title.substring(0, 40) + '...' : title;
+      return `<tr><td><input type="checkbox" class="media-cb" value="${m.id}" onchange="updateBatchBtn()"></td><td>${m.message_id}</td><td title="${esc(title)}">${esc(titleShort)}</td><td>${formatSize(m.size)}</td>
       <td>${catBadge(m.category)}${m.season?` S${String(m.season).padStart(2,'0')}E${String(m.episode).padStart(2,'0')}`:''}</td>
       <td>${m.resolution||'-'}</td><td>${m.strm_path?'<span class="badge green">':'<span class="badge gray">'}${m.strm_path?'有':'无'}</span></td>
       <td><a href="/stream/${m.message_id}" target="_blank" class="btn" style="padding:4px 8px;font-size:11px">播放</a>
-      <button class="btn danger" style="padding:4px 8px;font-size:11px;margin-left:4px" onclick="deleteMedia(${m.id})">删除</button></td></tr>`).join('')}
+      <button class="btn danger" style="padding:4px 8px;font-size:11px;margin-left:4px" onclick="deleteMedia(${m.id})">删除</button></td></tr>`;
+    }).join('')}
     </table><div class="sub mt-16">共 ${mediaTotal} 条</div>`;
 }
 function filterMedia() {
@@ -987,7 +996,7 @@ async function saveAdultEdit() {
   const note = document.getElementById('adultEditNote').value.trim();
   if (!id) return;
   const body = { id: parseInt(id) };
-  if (note) body.display_name = note;
+  if (note) body.tmdb_name = note;
   const r = await apiPost('/api/adult/update', body);
   if (r?.success) { toast('已保存', 'success'); closeModal('adultEditModal'); loadAdult(); }
   else toast(r?.message || '保存失败', 'error');
