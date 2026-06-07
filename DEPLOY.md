@@ -83,7 +83,7 @@ WEB_PASSWORD=your_password
 ### 5. 生成 Session（首次需要）
 
 ```bash
-docker-compose run --rm app python generate_session.py
+docker run --rm -v $(pwd)/.env:/app/.env:rw ghcr.io/dirige/tg-emby-streamer:main python generate_session.py
 ```
 
 按提示输入手机号和验证码。
@@ -97,6 +97,12 @@ docker-compose up -d
 ### 7. 访问 Web 面板
 
 打开浏览器访问 `http://你的服务器IP:8001`
+
+### 镜像标签说明
+
+- `ghcr.io/dirige/tg-emby-streamer:main` - 最新开发版本
+- `ghcr.io/dirige/tg-emby-streamer:v1.0.0` - 稳定版本（推荐）
+- `ghcr.io/dirige/tg-emby-streamer:latest` - 最新版本
 
 ---
 
@@ -277,43 +283,91 @@ PROXY_ENABLED=false
 
 ## 常用命令
 
-### 生成 Session String
+### Docker 命令
+
+#### 查看服务状态
 
 ```bash
-python generate_session.py
+docker-compose ps
 ```
 
-### 扫描历史消息
+#### 查看日志
+
+```bash
+docker-compose logs -f
+```
+
+#### 重启服务
+
+```bash
+docker-compose restart
+```
+
+#### 停止服务
+
+```bash
+docker-compose down
+```
+
+#### 更新镜像
+
+```bash
+docker-compose pull
+docker-compose up -d
+```
+
+### 工具命令（Docker 环境）
+
+#### 生成 Session String
+
+```bash
+docker run --rm -v $(pwd)/.env:/app/.env:rw ghcr.io/dirige/tg-emby-streamer:main python generate_session.py
+```
+
+#### 扫描历史消息
 
 ```bash
 # 从监听频道转发到私有群聊（每个频道最多 100 条）
-python scan_history.py forward --limit 100
+docker-compose run --rm stream-server python scan_history.py forward --limit 100
 
 # 从私有群聊录入数据库并生成 STRM
-python scan_history.py record --limit 100
+docker-compose run --rm stream-server python scan_history.py record --limit 100
 ```
 
-### 重新生成 STRM 文件
+#### 重新生成 STRM 文件
 
 ```bash
+docker-compose run --rm stream-server python fix_strm.py
+```
+
+#### 查看数据库内容
+
+```bash
+docker-compose run --rm stream-server python check_db.py
+```
+
+#### 诊断工具
+
+```bash
+docker-compose run --rm stream-server python scripts/diagnose.py
+```
+
+#### 清理未识别记录
+
+```bash
+docker-compose run --rm stream-server python scripts/clear_unrecognized.py
+```
+
+### 本地开发命令
+
+如果使用本地部署，请使用以下命令：
+
+```bash
+python generate_session.py
+python scan_history.py forward --limit 100
 python fix_strm.py
-```
-
-### 查看数据库内容
-
-```bash
 python check_db.py
-```
-
-### 诊断工具
-
-```bash
 python scripts/diagnose.py
-```
-
-### 清理未识别记录
-
-```bash
 python scripts/clear_unrecognized.py
 ```
 

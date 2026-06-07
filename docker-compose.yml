@@ -1,6 +1,6 @@
 services:
   stream-server:
-    build: .
+    image: ghcr.io/dirige/tg-emby-streamer:main
     container_name: tg-emby-streamer
     restart: unless-stopped
     ports:

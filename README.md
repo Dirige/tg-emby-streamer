@@ -40,6 +40,29 @@
 
 ## 快速开始
 
+### Docker 部署（推荐）
+
+```bash
+# 1. 下载配置文件
+wget https://raw.githubusercontent.com/Dirige/tg-emby-streamer/main/docker-compose.yml
+wget https://raw.githubusercontent.com/Dirige/tg-emby-streamer/main/.env.example
+
+# 2. 创建配置文件
+cp .env.example .env
+# 编辑 .env 填入你的配置
+
+# 3. 生成 Session（首次需要）
+docker run --rm -v $(pwd)/.env:/app/.env:rw ghcr.io/dirige/tg-emby-streamer:main python generate_session.py
+
+# 4. 启动服务
+docker-compose up -d
+
+# 5. 访问 Web 面板
+http://你的服务器IP:8001
+```
+
+### 本地开发
+
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/Dirige/tg-emby-streamer.git
@@ -50,7 +73,7 @@ pip install -r requirements.txt
 
 # 3. 配置
 cp .env.example .env
-# 编辑 .env 填入你的配置（详见下方配置说明）
+# 编辑 .env 填入你的配置
 
 # 4. 生成 Session（首次需要）
 python generate_session.py
