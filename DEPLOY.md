@@ -98,6 +98,31 @@ docker-compose up -d
 
 打开浏览器访问 `http://你的服务器IP:8001`
 
+### 8. 更新服务
+
+```bash
+# 拉取最新代码
+git pull
+
+# 重新构建镜像并启动
+docker-compose up -d --build
+
+# 查看日志确认更新成功
+docker-compose logs -f
+```
+
+**如果代码没有变化但想强制重建镜像：**
+
+```bash
+docker-compose up -d --build --force-recreate
+```
+
+**如果只更新了依赖（requirements.txt 变化）：**
+
+```bash
+docker-compose up -d --build
+```
+
 ---
 
 ## 方式二：本地部署
