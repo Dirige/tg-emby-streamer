@@ -57,8 +57,8 @@ async def serve_stream(
     mime_type: str,
     request: Request,
 ):
-    stream_client = get_stream_client()
-    client = stream_client if stream_client else await get_client()
+    # Always use user client for streaming (bots can't access channel files)
+    client = await get_client()
     downloader = CachedFileDownloader(client, chat_id, message_id)
 
     if file_size is None:
@@ -152,7 +152,7 @@ async def stream_head(message_id: int):
         else:
             chat_id = settings.telegram.channel_id
             client = await get_client()
-            downloader = CachedFileDownloader(get_stream_client() or client, chat_id, message_id)
+            downloader = CachedFileDownloader(client, chat_id, message_id)
             file_size = await downloader.get_file_size()
             mime_type = "video/mp4"
             file_name = f"{message_id}.mp4"

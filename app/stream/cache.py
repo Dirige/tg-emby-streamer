@@ -7,7 +7,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-CHUNK_SIZE = 1024 * 1024  # 1MB
+CHUNK_SIZE = 4 * 1024 * 1024  # 4MB
 
 
 class PureLRU:

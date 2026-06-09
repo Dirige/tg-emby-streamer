@@ -1,6 +1,6 @@
 services:
   stream-server:
-    build: .
+    image: ghcr.io/dirige/tg-emby-streamer:main
     container_name: tg-emby-streamer
     restart: unless-stopped
     ports:
@@ -9,11 +9,20 @@ services:
       - ./data:/app/data
       - ./cache:/app/cache
       - ./media:/app/media
-      - ./strm:/app/strm
+      - /vol1/1000/SSD/Strm:/app/strm
       - ./sing-box:/app/sing-box
       - ./.env:/app/.env:ro
+      - ./app_media:/app/app/media
+      - ./fixed_parser.py:/app/app/media/parser.py
+      - ./new_strm.py:/app/app/media/strm.py
+      - ./cache.py:/app/app/stream/cache.py
+      - ./range_stream.py:/app/app/stream/range_stream.py
+      - ./main.py:/app/app/main.py
+      - ./config.py:/app/app/config.py
+      - ./router.py:/app/app/stream/router.py
     env_file:
       - .env
+    command: sh -c "pip install python-multipart -q && python run.py"
     networks:
       - tg-emby
 

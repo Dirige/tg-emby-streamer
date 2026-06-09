@@ -12,7 +12,7 @@ from app.telegram.client import get_stream_client
 
 logger = logging.getLogger(__name__)
 
-CHUNK_SIZE = 1024 * 1024
+CHUNK_SIZE = 4 * 1024 * 1024  # 4MB
 
 
 @dataclass
@@ -65,7 +65,7 @@ class CachedFileDownloader:
         if self._location is not None:
             return self._location
 
-        client = get_stream_client() or self._client
+        client = self._client
         messages = await client.get_messages(
             chat_id=self._chat_id, message_ids=self._message_id
         )
@@ -91,7 +91,7 @@ class CachedFileDownloader:
         return location.file_size
 
     async def _download_single_chunk(self, offset: int, limit: int) -> bytes:
-        client = get_stream_client() or self._client
+        client = self._client
         location = await self.get_location()
 
         input_location = InputDocumentFileLocation(
@@ -101,12 +101,15 @@ class CachedFileDownloader:
             thumb_size="",
         )
 
+        # Telegram MTProto max chunk is 1MB
+        mtproto_limit = min(limit, 1024 * 1024)
+
         part = await _invoke_with_retry(
             client,
             functions.upload.GetFile(
                 location=input_location,
                 offset=offset,
-                limit=limit,
+                limit=mtproto_limit,
             ),
         )
 

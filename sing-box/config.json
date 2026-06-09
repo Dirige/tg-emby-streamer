@@ -1,7 +1,7 @@
 {
   "log": {
     "level": "info",
-    "output": "C:\\Users\\17522\\Desktop\\AI\\telegram-emby-streamer\\sing-box\\sing-box.log",
+    "output": "/app/sing-box/sing-box.log",
     "timestamp": true
   },
   "inbounds": [
