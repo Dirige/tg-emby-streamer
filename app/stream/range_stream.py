@@ -92,31 +92,39 @@ class CachedFileDownloader:
 
     async def _download_single_chunk(self, offset: int, limit: int) -> bytes:
         client = self._client
-        location = await self.get_location()
 
-        input_location = InputDocumentFileLocation(
-            id=location.document_id,
-            access_hash=location.access_hash,
-            file_reference=location.file_reference,
-            thumb_size="",
-        )
+        for attempt in range(2):
+            location = await self.get_location()
 
-        # Telegram MTProto max chunk is 1MB
-        mtproto_limit = min(limit, 1024 * 1024)
+            input_location = InputDocumentFileLocation(
+                id=location.document_id,
+                access_hash=location.access_hash,
+                file_reference=location.file_reference,
+                thumb_size="",
+            )
 
-        part = await _invoke_with_retry(
-            client,
-            functions.upload.GetFile(
-                location=input_location,
-                offset=offset,
-                limit=mtproto_limit,
-            ),
-        )
+            # Telegram MTProto max chunk is 1MB
+            mtproto_limit = min(limit, 1024 * 1024)
 
-        if not part.bytes:
-            return b""
-
-        return part.bytes
+            try:
+                part = await _invoke_with_retry(
+                    client,
+                    functions.upload.GetFile(
+                        location=input_location,
+                        offset=offset,
+                        limit=mtproto_limit,
+                    ),
+                )
+                if not part.bytes:
+                    return b""
+                return part.bytes
+            except Exception as e:
+                err_str = str(e).lower()
+                if "file_reference" in err_str and attempt == 0:
+                    logger.warning(f"File reference expired for msg={self._message_id}, refreshing...")
+                    self._location = None  # 清掉缓存，下次 get_location 会重新获取
+                    continue
+                raise
 
     async def download_chunk(self, offset: int, limit: int) -> bytes:
         location = await self.get_location()
