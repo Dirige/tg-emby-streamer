@@ -1,0 +1,26 @@
+services:
+  tg-emby-streamer:
+    image: ghcr.io/dirige/tg-emby-streamer:main
+    container_name: tg-emby-streamer
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      # 配置文件（必须）
+      - ./config.yaml:/app/config.yaml
+      # 代码（开发阶段挂载，方便热更新）
+      - ./app:/app/app
+      # 运行时数据（数据库、缓存、STRM 文件）
+      - ./data:/app/data
+      # 可选：STRM 文件输出到外部目录（如 Emby 媒体库路径）
+      # - /path/to/emby/strm:/app/data/strm
+    environment:
+      # 所有配置可通过 config.yaml 设置，也可通过环境变量覆盖
+      # 例如：TELEGRAM_API_ID=12345 会覆盖 config.yaml 中的 telegram.api_id
+      - TZ=Asia/Shanghai
+    networks:
+      - tg-emby
+
+networks:
+  tg-emby:
+    driver: bridge
