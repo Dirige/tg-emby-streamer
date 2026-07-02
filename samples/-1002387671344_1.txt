@@ -1,0 +1,11 @@
+CHANNEL_ID=-1002387671344
+CHANNEL_NAME=Netflix电视剧📹海外剧在线看
+MESSAGE_ID=3321
+FILE_NAME=Maximum_Pleasure_Guaranteed_S01E08_Hallidays_1080p_ATVP_WEB_DL_H.mp4
+FILE_SIZE=504811034
+MIME_TYPE=video/mp4
+DURATION=2055
+=== CAPTION ===
+#极致欢愉保障 第8集
+=== END ===
+LINK=https://t.me/c/1002387671344/3321

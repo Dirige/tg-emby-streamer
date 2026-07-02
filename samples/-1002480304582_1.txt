@@ -1,0 +1,11 @@
+CHANNEL_ID=-1002480304582
+CHANNEL_NAME=热门动漫 4K超清在线看
+MESSAGE_ID=2789
+FILE_NAME=云深不知梦_特别篇：逐冥之役_Eclipse_of_Illusion_SP_The_Miasma_War_S01E04_2026.mp4
+FILE_SIZE=691003994
+MIME_TYPE=video/mp4
+DURATION=1219
+=== CAPTION ===
+#云深不知梦 特别篇：逐冥之役 第4集  评论区更4K
+=== END ===
+LINK=https://t.me/c/1002480304582/2789
