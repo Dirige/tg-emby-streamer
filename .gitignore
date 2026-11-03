@@ -1,10 +1,35 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-.env
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 运行时数据（数据库 / 缓存 / STRM 输出）
 data/
 cache/
-media/
-config.yaml
+strm/
+/media/
 *.db
+*.db-shm
+*.db-wal
+.scan_state.json
+
+# 真实配置与敏感信息（勿提交，请使用 config.example.yaml）
+config/
+config.yaml
+*.session
+*.session-journal
+
+# 构建产物 / 分发文件
+*.zip
+*.tar
+*.tar.gz
+dist/
+build/
+
+# 系统 / 编辑器
+Thumbs.db
 .DS_Store
+desktop.ini
+*.log

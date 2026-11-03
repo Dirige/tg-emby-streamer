@@ -13,9 +13,6 @@ telegram:
   # 可选：Session String（生成后自动填入，优先于 phone 登录）
   session_string: ""
 
-  # Telegram 账号 User ID（自动获取）
-  user_id: 0
-
   # 需要监控的频道 ID，逗号分隔
   monitor_channels: "-1001668687022,-1002855500786"
 
@@ -25,7 +22,7 @@ telegram:
 proxy:
   # 是否启用代理（Telegram 部分地区需要）
   enabled: false
-  scheme: socks5
+  scheme: socks5           # socks5 或 http
   host: 127.0.0.1
   port: 10808
 
@@ -44,6 +41,9 @@ server:
   stream_token: ""
 
 storage:
+  # 数据存储目录（数据库、缓存、下载文件）
+  data_dir: /app/data
+
   # STRM 文件输出目录（Docker 内部路径，对应映射的 ./data/strm）
   strm_dir: /app/data/strm
 
@@ -65,11 +65,40 @@ auth:
   username: admin
   password: "changeme"
 
+bot:
+  # 手动入库管理员用户 ID（逗号分隔多个）
+  # 只有这些用户可以将视频转发到 Bot 进行手动入库
+  admin_users: ""
+
 notify:
   # 入库通知（扫描完成后发送 Telegram 消息）
   enabled: false
-  target: "123456789"          # 接收通知的用户 ID
+  # 接收通知的用户 ID
+  target: ""
 
   # Bot Token（从 @BotFather 获取），优先于用户账号发送通知
   # 留空则使用用户账号发送（通过 Pyrogram 登录的账号）
   bot_token: ""
+
+# ============================================
+# TMDB 元数据刮削（新版本新增）
+# 配置后，扫描入库时会自动匹配 TMDB 并生成 NFO + 海报
+# ============================================
+tmdb:
+  # TMDB API Key（在 https://www.themoviedb.org 注册获取）
+  api_key: ""
+  # API 地址（国内网络可使用自建反代）
+  api_base: "https://api.themoviedb.org/3"
+  # 图片 CDN 地址
+  image_base: "https://image.tmdb.org/t/p"
+
+# Emby 刷新（入库后自动刷新媒体库，可选）
+emby:
+  # Emby 服务器地址
+  url: ""
+  # Emby API Key（管理后台 → 高级 → API 密钥）
+  api_key: ""
+
+# TMDB 刮削开关
+enrich:
+  enabled: true

@@ -47,9 +47,19 @@ ENV_TO_KEY = {
     "NOTIFY_BOT_TOKEN": "notify.bot_token",
     "TELEGRAM_MONITOR_CHANNELS": "telegram.monitor_channels",
     "MEDIA_PATH": "storage.media_path",
+    "TMDB_API_KEY": "tmdb.api_key",
+    "TMDB_API_BASE": "tmdb.api_base",
+    "TMDB_IMAGE_BASE": "tmdb.image_base",
+    "ENRICH_ENABLED": "enrich.enabled",
+    "EMBY_URL": "emby.url",
+    "EMBY_API_KEY": "emby.api_key",
 }
 
 KEY_TO_ENV = {v: k for k, v in ENV_TO_KEY.items()}
+
+# Additional env mapping for bot settings
+ENV_TO_KEY["BOT_ADMIN_USERS"] = "bot.admin_users"
+KEY_TO_ENV["bot.admin_users"] = "BOT_ADMIN_USERS"
 
 
 def _deep_get(data: dict, key_path: str) -> Any:
@@ -338,6 +348,36 @@ class WebSettings:
         self.stream_token: str = str(server.get("stream_token", ""))
 
 
+class TMDBSettings:
+    def __init__(self, data: dict):
+        d = data.get("tmdb", {})
+        self.api_key: str = str(d.get("api_key", ""))
+        self.api_base: str = str(d.get("api_base", "https://api.themoviedb.org/3"))
+        self.image_base: str = str(d.get("image_base", "https://image.tmdb.org/t/p"))
+
+
+class EmbySettings:
+    def __init__(self, data: dict):
+        d = data.get("emby", {})
+        self.url: str = str(d.get("url", "")).rstrip("/")
+        self.api_key: str = str(d.get("api_key", ""))
+
+
+class EnrichSettings:
+    def __init__(self, data: dict):
+        d = data.get("enrich", {})
+        self.enabled: bool = bool(d.get("enabled", True))
+
+
+class BotSettings:
+    def __init__(self, data: dict):
+        d = data.get("bot", {})
+        raw = d.get("admin_users", "")
+        self.admin_users: list[int] = [
+            int(u.strip()) for u in raw.split(",") if u.strip().lstrip("-").isdigit()
+        ] if isinstance(raw, str) else (raw or [])
+
+
 class NotificationSettings:
     def __init__(self, data: dict):
         d = data.get("notify", {})
@@ -367,6 +407,10 @@ class Settings:
         self.strm = STRMSettings(data)
         self.web = WebSettings(data)
         self.notify = NotificationSettings(data)
+        self.bot = BotSettings(data)
+        self.tmdb = TMDBSettings(data)
+        self.emby = EmbySettings(data)
+        self.enrich = EnrichSettings(data)
 
     def reload(self):
         self._load()

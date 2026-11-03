@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from app.config import settings, BASE_DIR, save_config, save_config_value, get_config_value
 from app.database import async_session
-from app.models import Media, ChannelRule, Category
+from app.models import Media, ChannelRule, Category, UnrecognizedMedia
 from app.media.strm import remove_old_strm
 from app.telegram.monitor import scan_channel, is_video_message
 from app.telegram.client import get_client, stop_client, test_connection, send_code, verify_code, check_password, get_auth_status
@@ -433,7 +433,7 @@ async def list_media(page: int = 1, page_size: int = 20, category: str = ""):
 @router.get("/api/media/unrecognized")
 async def list_unrecognized(page: int = 1, page_size: int = 20):
     async with async_session() as session:
-        query = select(Media).where(Media.title.is_(None)).order_by(Media.created_at.desc())
+        query = select(UnrecognizedMedia).order_by(UnrecognizedMedia.created_at.desc())
         count_result = await session.execute(query)
         total = len(count_result.scalars().all())
         offset = (page - 1) * page_size
@@ -445,12 +445,11 @@ async def list_unrecognized(page: int = 1, page_size: int = 20):
         "message_id": r.message_id,
         "chat_id": r.chat_id,
         "file_name": r.file_name,
-        "size": r.size,
         "category": r.category,
-        "title": r.title,
+        "parsed_title": r.parsed_title,
         "caption": r.caption,
         "source_link": r.source_link,
-        "strm_path": r.strm_path,
+        "reason": r.reason,
         "created_at": str(r.created_at) if r.created_at else None,
     } for r in records]
     return {"total": total, "page": page, "page_size": page_size, "items": items}
@@ -475,6 +474,13 @@ async def get_media(media_id: int):
             "caption": r.caption,
             "source_link": r.source_link,
             "strm_path": r.strm_path,
+            "tmdb_id": r.tmdb_id,
+            "tmdb_type": r.tmdb_type,
+            "tmdb_title": r.tmdb_title,
+            "tmdb_year": r.tmdb_year,
+            "nfo_path": r.nfo_path,
+            "poster_path": r.poster_path,
+            "backdrop_path": r.backdrop_path,
         }
     }
 
@@ -552,17 +558,160 @@ async def delete_media_batch(request: Request):
 async def clear_unrecognized():
     try:
         async with async_session() as session:
-            result = await session.execute(select(Media).where(Media.title.is_(None)))
+            result = await session.execute(select(UnrecognizedMedia))
             records = result.scalars().all()
-            strm_paths = [r.strm_path for r in records if r.strm_path]
-            await session.execute(delete(Media).where(Media.title.is_(None)))
+            await session.execute(delete(UnrecognizedMedia))
             await session.commit()
-        for path in strm_paths:
-            try:
-                remove_old_strm(path)
-            except Exception:
-                pass
         return {"success": True, "message": f"已清除 {len(records)} 条未识别记录"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@router.post("/api/unrecognized/retry")
+async def retry_unrecognized(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return {"success": False, "message": "请求解析失败"}
+    ur_id = body.get("id")
+    if not ur_id:
+        return {"success": False, "message": "缺少 ID"}
+    try:
+        async with async_session() as session:
+            ur = await session.get(UnrecognizedMedia, ur_id)
+            if not ur:
+                return {"success": False, "message": "记录不存在"}
+            result = await session.execute(
+                select(Media).where(
+                    Media.message_id == ur.message_id,
+                    Media.chat_id == ur.chat_id,
+                )
+            )
+            media = result.scalar_one_or_none()
+            if not media:
+                return {"success": False, "message": "关联的媒体记录不存在"}
+        from app.media.enricher import enrich_media_safe
+        enrich_result = await enrich_media_safe(media.id)
+        if enrich_result.get("success"):
+            async with async_session() as session:
+                ur = await session.get(UnrecognizedMedia, ur_id)
+                if ur:
+                    await session.delete(ur)
+                    await session.commit()
+            return {"success": True, "message": "TMDB 匹配成功，已从未识别列表移除"}
+        return {"success": False, "message": f"重试失败: {enrich_result.get('reason', '未知')}"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@router.post("/api/unrecognized/delete")
+async def delete_unrecognized(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return {"success": False, "message": "请求解析失败"}
+    ur_id = body.get("id")
+    if not ur_id:
+        return {"success": False, "message": "缺少 ID"}
+    try:
+        async with async_session() as session:
+            ur = await session.get(UnrecognizedMedia, ur_id)
+            if ur:
+                await session.delete(ur)
+                await session.commit()
+        return {"success": True, "message": "已删除"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@router.get("/api/tmdb/config")
+async def get_tmdb_config():
+    return {
+        "tmdb": {
+            "api_key": settings.tmdb.api_key,
+            "api_base": settings.tmdb.api_base,
+            "image_base": settings.tmdb.image_base,
+        },
+        "emby": {
+            "url": settings.emby.url,
+            "api_key": settings.emby.api_key,
+        },
+        "enrich": {
+            "enabled": settings.enrich.enabled,
+        },
+    }
+
+
+@router.post("/api/tmdb/save")
+async def save_tmdb_config(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return {"success": False, "message": "请求解析失败"}
+    try:
+        tmdb = body.get("tmdb", {})
+        if "api_key" in tmdb:
+            save_config_value("tmdb.api_key", tmdb["api_key"])
+        if "api_base" in tmdb and tmdb["api_base"]:
+            save_config_value("tmdb.api_base", tmdb["api_base"])
+        if "image_base" in tmdb and tmdb["image_base"]:
+            save_config_value("tmdb.image_base", tmdb["image_base"])
+        emby = body.get("emby", {})
+        if "url" in emby:
+            save_config_value("emby.url", emby["url"])
+        if "api_key" in emby:
+            save_config_value("emby.api_key", emby["api_key"])
+        if "enabled" in body.get("enrich", {}):
+            save_config_value("enrich.enabled", body["enrich"]["enabled"])
+        settings.reload()
+        return {"success": True, "message": "TMDB/Emby 设置已保存"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@router.post("/api/tmdb/enrich/{media_id}")
+async def manual_enrich(media_id: int):
+    from app.media.enricher import enrich_media_safe
+    result = await enrich_media_safe(media_id)
+    return result
+
+
+@router.post("/api/emby/refresh")
+async def manual_emby_refresh():
+    from app.media.emby_notifier import refresh_library
+    return await refresh_library()
+
+
+@router.post("/api/tmdb/unrecognized/retry-all")
+async def retry_all_unrecognized():
+    try:
+        async with async_session() as session:
+            result = await session.execute(select(UnrecognizedMedia))
+            records = result.scalars().all()
+        success_count = 0
+        for ur in records:
+            try:
+                result = await session.execute(
+                    select(Media).where(
+                        Media.message_id == ur.message_id,
+                        Media.chat_id == ur.chat_id,
+                    )
+                )
+                media = result.scalar_one_or_none()
+                if not media:
+                    continue
+                from app.media.enricher import enrich_media_safe
+                enrich_result = await enrich_media_safe(media.id)
+                if enrich_result.get("success"):
+                    async with async_session() as s:
+                        u = await s.get(UnrecognizedMedia, ur.id)
+                        if u:
+                            await s.delete(u)
+                            await s.commit()
+                    success_count += 1
+            except Exception:
+                continue
+        return {"success": True, "message": f"重试完成，成功 {success_count}/{len(records)}"}
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -656,7 +805,7 @@ async def full_import_next():
     _scan_state["current_result"] = ""
 
     try:
-        r = await scan_channel(ch_id, limit=0)
+        r = await scan_channel(ch_id, limit=0, notify_detailed=False)
         if r.get("success"):
             match = re.search(r"新增 (\d+) 条", r.get("message", ""))
             added = int(match.group(1)) if match else 0

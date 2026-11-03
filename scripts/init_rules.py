@@ -62,14 +62,6 @@ RULES = [
         "episode_rule": "regex:第\s*(\d+)\s*集",
         "season": 1,
     },
-    {
-        "channel_id": "-1002974548262",
-        "channel_name": "独播库 4K电视剧短剧",
-        "category": "电视剧",
-        "title_rule": "line:0",
-        "episode_rule": "",
-        "season": 1,
-    },
 ]
 
 async def main():

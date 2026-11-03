@@ -6,6 +6,8 @@ from app.database import async_session
 from app.models import Media, ChannelRule, Category
 from app.media.parser import parse_media_info
 from app.media.strm import generate_strm, remove_old_strm
+from app.media.enricher import enrich_media_safe, add_to_unrecognized
+from app.media.emby_notifier import refresh_library
 from app.telegram.client import get_client
 from sqlalchemy import select
 from pathlib import Path
@@ -76,7 +78,12 @@ async def _send_notify(message: str):
     await bot_send(message)
 
 
-async def scan_channel(channel_id: int, limit: int = 200) -> dict:
+def _build_scan_notify(ch_name: str, count: int, category: str, items: list[dict]) -> str:
+    from app.telegram.bot import build_scan_notify
+    return build_scan_notify(ch_name, count, category, items)
+
+
+async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool = True, item_callback=None) -> dict:
     try:
         client = await get_client()
 
@@ -95,6 +102,7 @@ async def scan_channel(channel_id: int, limit: int = 200) -> dict:
         strm_subdir = await _get_strm_subdir(rule.category)
         count = 0
         deferred_parts: list[dict] = []
+        scanned_items: list[dict] = []
         async for message in client.get_chat_history(channel_id, limit=limit):
             if not is_video_message(message):
                 continue
@@ -106,15 +114,23 @@ async def scan_channel(channel_id: int, limit: int = 200) -> dict:
                 logger.info(f"Skipped short video msg={message.id} duration={duration}s")
                 continue
 
+            fn = media.file_name or f"video_{message.id}.mp4"
+            caption = message.caption or ""
+
             async with async_session() as session:
                 result = await session.execute(
                     select(Media).where(Media.message_id == message.id)
                 )
                 if result.scalar_one_or_none():
+                    if item_callback:
+                        item_callback(
+                            title=fn,
+                            category=rule.category,
+                            strm_path=None,
+                            action="skipped",
+                            message="已存在",
+                        )
                     continue
-
-            fn = media.file_name or f"video_{message.id}.mp4"
-            caption = message.caption or ""
 
             info = parse_media_info(
                 caption=caption,
@@ -212,7 +228,24 @@ async def scan_channel(channel_id: int, limit: int = 200) -> dict:
                 )
                 session.add(record)
                 await session.commit()
+                if settings.enrich.enabled and title:
+                    enrich_result = await enrich_media_safe(record.id)
+                    if not enrich_result.get("success") and settings.tmdb.api_key:
+                        await add_to_unrecognized(record.id, enrich_result.get("reason"))
                 count += 1
+                if item_callback:
+                    item_callback(
+                        title=display_name,
+                        category=rule.category,
+                        strm_path=str(strm_path) if strm_path else None,
+                        action="added",
+                    )
+                scanned_items.append({
+                    "file_name": fn,
+                    "category": rule.category,
+                    "source_link": source_link,
+                    "episode": info.get("episode") if info else None,
+                })
 
         for dp in deferred_parts:
             async with async_session() as session:
@@ -263,15 +296,40 @@ async def scan_channel(channel_id: int, limit: int = 200) -> dict:
                 )
                 session.add(record)
                 await session.commit()
+                if settings.enrich.enabled and dp.get("title"):
+                    enrich_result = await enrich_media_safe(record.id)
+                    if not enrich_result.get("success") and settings.tmdb.api_key:
+                        await add_to_unrecognized(record.id, enrich_result.get("reason"))
                 count += 1
+                if item_callback:
+                    item_callback(
+                        title=dp.get("display_name") or dp.get("title") or dp.get("file_name", ""),
+                        category=rule.category,
+                        strm_path=str(strm_path) if strm_path else None,
+                        action="added",
+                    )
+                scanned_items.append({
+                    "title": dp.get("display_name") or dp.get("title") or dp.get("file_name", ""),
+                    "file_name": dp.get("file_name", ""),
+                    "category": rule.category,
+                    "source_link": dp.get("source_link", ""),
+                    "episode": dp["info"].get("episode") if dp.get("info") else None,
+                })
 
         if count > 0:
-            asyncio.create_task(_send_notify(
-                f"📦 **频道 {ch_name} 新增 {count} 条入库**\n\n"
-                f"频道: {ch_name}\n"
-                f"新增: {count} 条\n"
-                f"分类: {rule.category or '未分类'}"
-            ))
+            if notify_detailed:
+                notify_text = _build_scan_notify(
+                    ch_name, count, rule.category or "未分类", scanned_items
+                )
+            else:
+                notify_text = (
+                    f"📦 **{ch_name}** 扫描完成\n\n"
+                    f"新增: **{count}** 条\n"
+                    f"分类: {rule.category or '未分类'}"
+                )
+            asyncio.create_task(_send_notify(notify_text))
+            if settings.emby.url and settings.emby.api_key and settings.enrich.enabled:
+                asyncio.create_task(refresh_library())
         return {"success": True, "message": f"频道 {ch_name} 扫描完成，新增 {count} 条记录"}
 
     except ConnectionError as e:

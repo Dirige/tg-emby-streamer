@@ -253,18 +253,15 @@ docker logs -f tg-emby-streamer
 | `NOTIFY_ENABLED` | `notify.enabled` | 启用通知 |
 | `NOTIFY_TARGET` | `notify.target` | 通知接收者 |
 
-所有配置统一放在 `config.yaml` 中，`docker-compose.yml` 已挂载该文件：
+使用 `.env` 文件配合 Docker Compose 自动加载：
 
 ```bash
-# 复制示例配置文件并修改
-cp config.example.yaml config.yaml
-
-# 编辑 config.yaml 填入你的配置
-# 然后启动
+# .env 文件位于 docker-compose.yml 同目录时会被自动加载
+echo "TELEGRAM_API_ID=12345" >> .env
+echo "TELEGRAM_API_HASH=abc123" >> .env
+# ... 其他配置
 docker compose up -d
 ```
-
-> 环境变量方式已不再推荐。项目仍支持通过 `TELEGRAM_API_ID` 等环境变量覆盖配置（用于某些 Docker 编排场景），但建议统一使用 `config.yaml`。
 
 ---
 

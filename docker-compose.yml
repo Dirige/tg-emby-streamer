@@ -1,6 +1,6 @@
 services:
   tg-emby-streamer:
-    image: ghcr.io/dirige/tg-emby-streamer:main
+    image: tg-emby-streamer:local
     container_name: tg-emby-streamer
     restart: unless-stopped
     ports:
@@ -10,6 +10,7 @@ services:
       - ./config.yaml:/app/config.yaml
       # 代码（开发阶段挂载，方便热更新）
       - ./app:/app/app
+      - ./scripts:/app/scripts
       # 运行时数据（数据库、缓存、STRM 文件）
       - ./data:/app/data
       # 可选：STRM 文件输出到外部目录（如 Emby 媒体库路径）

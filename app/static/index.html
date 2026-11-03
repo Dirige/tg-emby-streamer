@@ -13,7 +13,7 @@ a{color:var(--accent2);text-decoration:none;transition:color .2s}a:hover{color:v
 ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:var(--text2)}
 .topbar{background:rgba(22,25,35,.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .topbar h1{font-size:17px;font-weight:700;display:flex;align-items:center;gap:10px;letter-spacing:-.3px}
-.topbar h1::before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#8b5cf6);box-shadow:0 0 12px rgba(99,102,241,.5)}
+.topbar .logo-icon{width:22px;height:22px;display:inline-block}
 .tabs{display:flex;gap:2px;background:rgba(22,25,35,.6);padding:8px 28px;border-bottom:1px solid var(--border);overflow-x:auto}
 .tab{padding:7px 14px;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:500;color:var(--text2);transition:all .2s;white-space:nowrap}
 .tab:hover{background:var(--border);color:var(--text)}
@@ -84,7 +84,7 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
 <body>
 
 <div class="topbar">
-  <h1>TG Emby Streamer</h1>
+  <h1><img class="logo-icon" src="/logo.png" alt="" style="width:22px;height:22px"> TG Emby Streamer</h1>
   <div class="flex" style="gap:16px">
     <span id="dashTotalMedia" style="font-size:12px;color:var(--text2);background:var(--card2);padding:4px 12px;border-radius:6px;border:1px solid var(--border)"></span>
     <span id="globalStatus" style="font-size:12px;color:var(--text2);background:var(--card2);padding:4px 12px;border-radius:6px;border:1px solid var(--border)">v3.0</span>
@@ -96,6 +96,7 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
   <div class="tab" data-page="telegram">📡 频道管理</div>
   <div class="tab" data-page="media">🎬 媒体库</div>
   <div class="tab" data-page="unrecognized">❓ 未识别</div>
+  <div class="tab" data-page="metadata">🏷️ 元数据</div>
   <div class="tab" data-page="scan">🔍 扫描任务</div>
   <div class="tab" data-page="cache">💾 缓存管理</div>
   <div class="tab" data-page="settings">⚙️ 系统设置</div>
@@ -252,12 +253,51 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
     <div class="section-title">未识别媒体</div>
     <div class="btn-group">
       <select class="input" id="unrecPageSize" style="width:80px" onchange="unrecPage=1;loadUnrecognized()"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select>
+      <button class="btn warning" onclick="retryAllUnrecognized()">全部重试</button>
       <button class="btn primary" onclick="loadUnrecognized()">刷新</button>
       <button class="btn danger" onclick="clearAllUnrecognized()">清除全部</button>
     </div>
   </div>
   <div class="card"><div id="unrecognizedTable"></div></div>
   <div id="unrecPagination" class="mt-16" style="text-align:center"></div>
+</div>
+
+<!-- Metadata (TMDB/Emby) -->
+<div class="page" id="page-metadata">
+  <div class="flex-between mb-16">
+    <div class="section-title">🏷️ TMDB 元数据设置</div>
+    <button class="btn warning" onclick="tmdbTest()">测试连接</button>
+    <button class="btn primary" onclick="saveTmdbSettings()">保存设置</button>
+  </div>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>TMDB API</h3>
+      <div class="form-group"><label>API Key</label><input class="input" id="s_tmdb_key" placeholder="08b9ec307e11460091ce04008ae36ba6"></div>
+      <div class="form-group"><label>API 地址（反代）</label><input class="input" id="s_tmdb_api" placeholder="https://tmdb.255432.xyz/api/3"></div>
+      <div class="form-group"><label>图片地址（反代）</label><input class="input" id="s_tmdb_img" placeholder="https://tmdb.255432.xyz/t/p"></div>
+      <div class="hint">使用反代地址可避免 TMDB 被墙</div>
+    </div>
+    <div class="card">
+      <h3>Emby / Jellyfin 自动刷新</h3>
+      <div class="form-group"><label>Emby 服务器地址</label><input class="input" id="s_emby_url" placeholder="http://192.168.2.10:8096"></div>
+      <div class="form-group"><label>API Key</label><input class="input" id="s_emby_key" placeholder="在 Emby → 高级 → API 密钥中生成"></div>
+      <div class="hint">填写后，每次入库完成会自动通知 Emby 刷新媒体库</div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn btn-sm" onclick="testEmby()">测试连接</button>
+        <button class="btn btn-sm primary" onclick="triggerEmbyRefresh()">立即刷新</button>
+      </div>
+    </div>
+  </div>
+  <div class="card mt-16">
+    <h3>自动元数据识别</h3>
+    <div class="form-group">
+      <label class="flex" style="gap:8px;cursor:pointer">
+        <input type="checkbox" id="s_enrich_enabled" checked>
+        <span>入库时自动从 TMDB 获取元数据（海报、简介、分类信息）</span>
+      </label>
+    </div>
+  </div>
+  <div class="card mt-16" id="tmdbTestResult" style="display:none"></div>
 </div>
 
 <!-- Scan -->
@@ -284,14 +324,33 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
     <div id="scanStatus" class="mt-16" style="display:none;padding:12px;border-radius:6px;background:var(--bg);border:1px solid var(--border);font-size:13px"></div>
   </div>
 
+  <!-- CLI Scan -->
+  <div class="card mb-16" style="border-color:var(--accent);border-width:2px">
+    <h3 style="font-size:16px;display:flex;align-items:center;gap:8px">📟 命令行扫描（推荐长时间/全量任务）</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:12px">
+      进入容器执行，实时查看每条入库记录，支持 Ctrl+C 随时停止，不会因浏览器关闭而中断。
+    </p>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;font-size:13px;line-height:2">
+      <div><span style="color:var(--text2)"># 全量扫描所有频道（limit=0 表示全部消息）</span></div>
+      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 0</code></div>
+      <div style="margin-top:8px"><span style="color:var(--text2)"># 扫描单个频道</span></div>
+      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py -c 频道ID --limit 0</code></div>
+      <div style="margin-top:8px"><span style="color:var(--text2)"># 快捷：每频道扫 200 条（测试用，limit=0=全部消息）</span></div>
+      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 200</code></div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="navigator.clipboard?.writeText('docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 0');toast('已复制','success')">📋 全量扫描 (limit=0)</button>
+      <button class="btn" onclick="navigator.clipboard?.writeText('docker exec -it tg-emby-streamer python scripts/scan.py -c 频道ID --limit 0');toast('已复制','success')">📋 单频道扫描</button>
+    </div>
+  </div>
+
   <!-- Full Import -->
   <div class="card mb-16" style="border-color:var(--red);border-width:2px">
-    <h3 style="color:var(--red);font-weight:700;font-size:18px">⚠️ 全量入库</h3>
-    <p style="font-size:15px;color:var(--red);font-weight:700;padding:12px;background:rgba(239,68,68,.12);border-radius:8px;border:1px solid rgba(239,68,68,.3);margin-bottom:12px">
-      ⚠️ 仅限第一次部署使用！⚠️<br>
-      <span style="font-size:13px;font-weight:400;color:var(--text)">遍历所有已启用规则的频道，每条频道扫描最近 1000 条消息，全量提取视频入库。已存在的记录会自动跳过。</span>
+    <h3 style="color:var(--red);font-weight:700;font-size:16px">⚠️ 网页版全量入库</h3>
+    <p style="font-size:13px;color:var(--text2);padding:8px 0;margin-bottom:8px">
+      遍历所有已启用规则的频道，逐条扫描。适合少量频道，<span style="color:var(--yellow)">长时间任务推荐上方命令行方式</span>。
     </p>
-    <button class="btn danger" onclick="fullImport()" id="btnFullImport" style="font-size:15px;padding:12px 24px">🚀 开始全量入库</button>
+    <button class="btn danger" onclick="fullImport()" id="btnFullImport" style="font-size:14px;padding:12px 24px">🚀 开始全量入库</button>
     <div id="fullImportStatus" class="mt-16" style="display:none;padding:14px;border-radius:8px;background:var(--bg);border:1px solid var(--red);font-size:14px;font-weight:600"></div>
   </div>
 
@@ -814,31 +873,39 @@ async function loadUnrecognized() {
   if (!r) return;
   unrecTotal = r.total || 0;
   const el = document.getElementById('unrecognizedTable');
-  if (!r.items?.length) { el.innerHTML = '<div class="empty">没有未识别的媒体</div>'; document.getElementById('unrecPagination').innerHTML = ''; return; }
-  el.innerHTML = `<table><tr><th>MSG ID</th><th>文件名</th><th>分类</th><th>原消息</th><th>操作</th></tr>
-    ${r.items.map(m => `<tr><td>${m.message_id}</td><td title="${esc(m.file_name||'')}">${esc(m.file_name||'-')}</td>
+  if (!r.items?.length) { el.innerHTML = '<div class="empty">🎉 所有媒体都已成功识别</div>'; document.getElementById('unrecPagination').innerHTML = ''; return; }
+  el.innerHTML = `<table><tr><th>MSG ID</th><th>解析标题</th><th>分类</th><th>失败原因</th><th>原消息</th><th>操作</th></tr>
+    ${r.items.map(m => `<tr>
+      <td>${m.message_id}</td>
+      <td title="${esc(m.parsed_title||'')}">${esc(m.parsed_title||'-')}</td>
       <td><span class="badge gray">${m.category||'-'}</span></td>
-      <td>${m.source_link ? `<a href="${esc(m.source_link)}" target="_blank" style="font-size:11px">🔗 查看</a>` : '-'}</td>
+      <td style="max-width:200px;font-size:11px;color:var(--text2)">${esc(m.reason||'解析失败')}</td>
+      <td>${m.source_link ? `<a href="${esc(m.source_link)}" target="_blank" style="font-size:11px">🔗 原消息</a>` : '-'}</td>
       <td>
-        <a href="/stream/${m.message_id}" target="_blank" class="btn btn-sm">播放</a>
-        <button class="btn btn-sm" onclick="editUnrec(${m.id},'${esc(m.file_name||'')}')">编辑</button>
+        <button class="btn btn-sm success" onclick="retryUnrec(${m.id})">重试匹配</button>
         <button class="btn btn-sm danger" onclick="deleteUnrec(${m.id})">删除</button>
       </td></tr>`).join('')}
-    </table><div class="sub mt-16">共 ${unrecTotal} 条未识别</div>`;
+    </table><div class="sub mt-16">共 ${unrecTotal} 条未能自动识别，可点击"重试匹配"或手动对照原消息修改</div>`;
   renderPagination('unrecPagination', unrecPage, unrecTotal, parseInt(pageSize), (p) => { unrecPage = p; loadUnrecognized(); });
 }
 
-async function editUnrec(id, fileName) {
-  document.getElementById('mediaEditId').value = id;
-  document.getElementById('mediaEditTitle').value = fileName || '';
-  document.getElementById('mediaEditCategory').value = '电视剧';
-  document.getElementById('mediaEditLink').value = '';
-  openModal('mediaEditModal');
+async function retryUnrec(id) {
+  const r = await apiPost('/api/unrecognized/retry', { id });
+  if (r?.success) { toast('✅ ' + r.message, 'success'); loadUnrecognized(); }
+  else toast('❌ ' + (r?.message || '重试失败'), 'error');
+}
+
+async function retryAllUnrecognized() {
+  if (!confirm('确定重新匹配所有未识别记录？')) return;
+  toast('正在批量重试...', 'info');
+  const r = await apiPost('/api/tmdb/unrecognized/retry-all');
+  if (r?.success) { toast(r.message, 'success'); loadUnrecognized(); }
+  else toast(r?.message || '重试失败', 'error');
 }
 
 async function deleteUnrec(id) {
-  if (!confirm('确定删除？')) return;
-  const r = await apiDelete('/api/media/' + id);
+  if (!confirm('确定删除此未识别记录？')) return;
+  const r = await apiPost('/api/unrecognized/delete', { id });
   if (r?.success) { toast('已删除', 'success'); loadUnrecognized(); }
   else toast(r?.message || '删除失败', 'error');
 }
@@ -848,6 +915,82 @@ async function clearAllUnrecognized() {
   const r = await apiPost('/api/media/unrecognized/clear');
   if (r?.success) { toast(r.message, 'success'); loadUnrecognized(); }
   else toast(r?.message || '操作失败', 'error');
+}
+
+// ========== TMDB / Emby Settings ==========
+
+async function loadTmdbSettings() {
+  const r = await api('/api/tmdb/config');
+  if (!r) return;
+  const tmdb = r.tmdb || {};
+  const emby = r.emby || {};
+  const enrich = r.enrich || {};
+  document.getElementById('s_tmdb_key').value = tmdb.api_key || '';
+  document.getElementById('s_tmdb_api').value = tmdb.api_base || 'https://tmdb.255432.xyz/api/3';
+  document.getElementById('s_tmdb_img').value = tmdb.image_base || 'https://tmdb.255432.xyz/t/p';
+  document.getElementById('s_emby_url').value = emby.url || '';
+  document.getElementById('s_emby_key').value = emby.api_key || '';
+  document.getElementById('s_enrich_enabled').checked = enrich.enabled !== false;
+}
+
+async function saveTmdbSettings() {
+  const body = {
+    tmdb: {
+      api_key: document.getElementById('s_tmdb_key').value || '',
+      api_base: document.getElementById('s_tmdb_api').value || 'https://tmdb.255432.xyz/api/3',
+      image_base: document.getElementById('s_tmdb_img').value || 'https://tmdb.255432.xyz/t/p',
+    },
+    emby: {
+      url: document.getElementById('s_emby_url').value || '',
+      api_key: document.getElementById('s_emby_key').value || '',
+    },
+    enrich: {
+      enabled: document.getElementById('s_enrich_enabled').checked,
+    },
+  };
+  const r = await apiPost('/api/tmdb/save', body);
+  if (r?.success) toast('✅ ' + r.message, 'success');
+  else toast('❌ ' + (r?.message || '保存失败'), 'error');
+}
+
+async function tmdbTest() {
+  const key = document.getElementById('s_tmdb_key').value;
+  if (!key) { toast('请先填写 API Key', 'error'); return; }
+  const base = document.getElementById('s_tmdb_api').value || 'https://tmdb.255432.xyz/api/3';
+  toast('测试 TMDB 连接...', 'info');
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 10000);
+    const r = await fetch(`${base}/search/movie?api_key=${key}&query=test&language=zh-CN`, { signal: ctrl.signal });
+    if (r.status === 200) toast('✅ TMDB 连接正常', 'success');
+    else toast('❌ TMDB 返回 ' + r.status, 'error');
+  } catch (e) {
+    toast('❌ TMDB 连接失败: ' + e.message, 'error');
+  }
+}
+
+async function testEmby() {
+  const url = document.getElementById('s_emby_url').value;
+  const key = document.getElementById('s_emby_key').value;
+  if (!url || !key) { toast('请先填写 Emby 地址和 API Key', 'error'); return; }
+  toast('测试 Emby 连接...', 'info');
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 10000);
+    const r = await fetch(`${url}/emby/System/Info?api_key=${key}`, { signal: ctrl.signal });
+    if (r.status === 200) {
+      const info = await r.json();
+      toast('✅ Emby 连接正常: ' + (info.ServerName || ''), 'success');
+    } else toast('❌ Emby 返回 ' + r.status, 'error');
+  } catch (e) {
+    toast('❌ Emby 连接失败: ' + e.message, 'error');
+  }
+}
+
+async function triggerEmbyRefresh() {
+  const r = await apiPost('/api/emby/refresh');
+  if (r?.success) toast('✅ ' + r.message, 'success');
+  else toast('❌ ' + (r?.reason || '通知失败'), 'error');
 }
 
 // ========== Scan ==========
@@ -1165,6 +1308,7 @@ function loadPage(name) {
     case 'telegram': loadTelegram(); break;
     case 'media': Promise.all([loadMedia(), populateCategoryFilters()]); break;
     case 'unrecognized': loadUnrecognized(); break;
+    case 'metadata': loadTmdbSettings(); break;
     case 'scan': populateScanDropdown(); break;
     case 'cache': loadCache(); break;
     case 'settings': loadSettings(); break;
