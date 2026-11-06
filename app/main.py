@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import secrets
+import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI):
     global _monitor_task
     logger.info("Initializing database...")
     await init_db()
+    _enrich_queue.start()
     _monitor_task = asyncio.create_task(_auto_monitor())
     # Start bot handler
     _bot_handler = asyncio.create_task(start_bot_handler())
@@ -75,6 +77,10 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     prefetch_manager.cancel_all()
+    try:
+        await _enrich_queue.stop()
+    except Exception as e:
+        logger.warning(f"Error stopping enrich queue: {e}")
     try:
         await stop_client()
     except Exception as e:
@@ -92,7 +98,45 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-_session_tokens: dict[str, str] = {}
+_session_tokens: dict[str, float] = {}   # token -> 过期时间戳
+SESSION_TTL_SECONDS = 7200
+
+# 登录失败限流：同一来源 10 分钟内最多 5 次失败
+_login_failures: dict[str, list[float]] = {}
+LOGIN_MAX_FAILED = 5
+LOGIN_WINDOW_SECONDS = 600
+
+# 预加载设置（lifespan 里启动刮削队列）
+from app.media.enrich_queue import enrich_queue as _enrich_queue
+
+
+def _purge_expired_tokens():
+    now = time.time()
+    expired = [t for t, exp in _session_tokens.items() if exp <= now]
+    for t in expired:
+        _session_tokens.pop(t, None)
+
+
+def _get_client_ip(request: Request) -> str:
+    # 反代/sidecar 场景优先取 X-Forwarded-For 第一个值
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _login_too_many_failures(ip: str) -> bool:
+    now = time.time()
+    recent = [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW_SECONDS]
+    _login_failures[ip] = recent
+    return len(recent) >= LOGIN_MAX_FAILED
+
+
+def _safe_return_url(url: str | None) -> str:
+    """限制回跳地址为站内路径，防止开放重定向。"""
+    if url and url.startswith("/") and not url.startswith("//") and ":" not in url:
+        return url
+    return "/dashboard"
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -106,8 +150,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
 
             session_token = request.cookies.get("session_token")
-            if session_token and session_token in _session_tokens:
-                return await call_next(request)
+            if session_token:
+                _purge_expired_tokens()
+                if session_token in _session_tokens:
+                    return await call_next(request)
 
             if path.startswith("/stream/"):
                 if settings.web.stream_token:
@@ -151,14 +197,40 @@ async def login(request: Request):
     form = await request.form()
     username = form.get("username", "")
     password = form.get("password", "")
-    return_url = request.query_params.get("return", "/dashboard")
+    return_url = _safe_return_url(request.query_params.get("return", "/dashboard"))
+    ip = _get_client_ip(request)
+
+    if _login_too_many_failures(ip):
+        wait_min = LOGIN_WINDOW_SECONDS // 60
+        error_html = _login_page(return_url).replace(
+            '</div><div class="footer">',
+            f'<div class="error">尝试次数过多，请 {wait_min} 分钟后再试</div></div><div class="footer">',
+        )
+        return Response(content=error_html, status_code=429, media_type="text/html")
+
     if username == settings.web.username and password == settings.web.password:
         token = secrets.token_hex(32)
-        _session_tokens[token] = username
+        _session_tokens[token] = time.time() + SESSION_TTL_SECONDS
         response = RedirectResponse(url=return_url, status_code=302)
-        response.set_cookie("session_token", token, httponly=True, max_age=7200, samesite="Lax")
+        response.set_cookie(
+            "session_token", token, httponly=True,
+            max_age=SESSION_TTL_SECONDS, samesite="Lax",
+        )
         return response
-    return HTMLResponse(_login_page(return_url).replace('</div><div class="footer">', f'<div class="error">用户名或密码错误</div></div><div class="footer">'), status_code=200)
+
+    # 记录失败尝试（限流用）
+    now = time.time()
+    failures = [t for t in _login_failures.get(ip, []) if now - t < LOGIN_WINDOW_SECONDS]
+    failures.append(now)
+    _login_failures[ip] = failures
+
+    return HTMLResponse(
+        _login_page(return_url).replace(
+            '</div><div class="footer">',
+            '<div class="error">用户名或密码错误</div></div><div class="footer">',
+        ),
+        status_code=200,
+    )
 
 
 app.add_middleware(AuthMiddleware)

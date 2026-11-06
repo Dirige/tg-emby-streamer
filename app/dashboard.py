@@ -914,48 +914,22 @@ async def clear_cache():
 
 # ========== STRM ==========
 
-async def _get_strm_subdir_for_category(category: str) -> str | None:
-    if not category:
-        return None
-    async with async_session() as session:
-        result = await session.execute(
-            select(Category).where(Category.name == category)
-        )
-        cat = result.scalar_one_or_none()
-        return cat.strm_dir if cat and cat.strm_dir else None
-
-
 @router.post("/api/media/regen-strm")
 async def regen_strm():
     try:
-        from app.media.strm import generate_strm, remove_old_strm
-        async with async_session() as session:
-            result = await session.execute(select(Media))
-            records = result.scalars().all()
-        count = 0
-        for r in records:
-            try:
-                remove_old_strm(r.strm_path)
-                strm_subdir = await _get_strm_subdir_for_category(r.category)
-                strm_path = generate_strm(
-                    message_id=r.message_id,
-                    category=r.category,
-                    title=r.title,
-                    season=None,
-                    episode=None,
-                    year=None,
-                    strm_subdir=strm_subdir,
-                )
-                async with async_session() as session:
-                    record = await session.get(Media, r.id)
-                    if record:
-                        record.strm_path = str(strm_path) if strm_path else None
-                        await session.commit()
-                count += 1
-            except Exception as e:
-                logger.warning(f"Regen STRM failed for {r.file_name}: {e}")
-        return {"success": True, "message": f"已重新生成 {count} 个 STRM 文件"}
+        from app.media.strm_regen import regen_all
+        stats = await regen_all()
+        return {
+            "success": True,
+            "message": (
+                f"已重新生成 {stats['regenerated']} 个 STRM 文件"
+                f"（多版本 {stats['versioned']} 个，"
+                f"清理孤儿 {stats['orphans_removed']} 个，"
+                f"失败 {stats['errors']} 个）"
+            ),
+        }
     except Exception as e:
+        logger.error(f"Regen STRM error: {e}")
         return {"success": False, "message": str(e)}
 
 

@@ -23,7 +23,7 @@ def parse_range_header(
 ) -> tuple[int, int | None]:
     if not range_header:
         return 0, None
-    match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+    match = re.match(r"bytes\s*=\s*(\d+)\s*-\s*(\d*)", range_header.strip())
     if not match:
         return 0, None
     start = int(match.group(1))
@@ -36,10 +36,24 @@ def parse_range_header(
     return start, end
 
 
-async def get_media_record(message_id: int) -> Media | None:
+async def get_media_record(
+    message_id: int, chat_id: str | None = None
+) -> Media | None:
+    keyed = chat_id is not None and str(chat_id) != ""
+    if keyed:
+        async with async_session() as session:
+            result = await session.execute(
+                select(Media).where(
+                    Media.chat_id == str(chat_id),
+                    Media.message_id == message_id,
+                ).limit(1)
+            )
+            return result.scalar_one_or_none()
+    # 旧路由兜底：不带 chat_id 时若跨频道出现重复 message_id，取最新一条
     async with async_session() as session:
         result = await session.execute(
             select(Media).where(Media.message_id == message_id)
+            .order_by(Media.id.desc()).limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -105,8 +119,10 @@ async def serve_stream(
         downloader = CachedFileDownloader(client, chat_id, message_id)
         async def fetch_from_tg(offset: int, limit: int) -> bytes:
             return await downloader.download_chunk(offset, limit)
-        data = await cache.get_range(message_id, start, content_length, fetch_from_tg)
-        prefetch_manager.schedule_prefetch(message_id, start, file_size, fetch_from_tg)
+        # 缓存键带频道维度，避免不同频道相同 message_id 串缓存
+        stream_key = f"{chat_id}:{message_id}"
+        data = await cache.get_range(stream_key, start, content_length, fetch_from_tg)
+        prefetch_manager.schedule_prefetch(stream_key, start, file_size, fetch_from_tg)
 
     actual_len = len(data)
     headers = {
@@ -158,7 +174,7 @@ async def _fetch_multi_part_range(
                 downloader = CachedFileDownloader(client, chat_id_int, pid)
                 async def _fetch(offset, limit):
                     return await downloader.download_chunk(offset, limit)
-                chunk = await cache.get_range(pid, local_start, to_read, _fetch)
+                chunk = await cache.get_range(f"{chat_id_int}:{pid}", local_start, to_read, _fetch)
                 chunks.append(chunk)
                 remaining -= len(chunk)
                 if remaining <= 0:
@@ -172,29 +188,45 @@ async def _fetch_multi_part_range(
 @router.get("/strm/{message_id}")
 @router.get("/stream/{message_id}")
 async def stream_by_message_id(message_id: int, request: Request):
-    record = await get_media_record(message_id)
+    return await _stream_common(await get_media_record(message_id), request)
+
+
+@router.get("/strm/{chat_id}/{message_id}")
+@router.get("/stream/{chat_id}/{message_id}")
+async def stream_by_chat_message(chat_id: str, message_id: int, request: Request):
+    return await _stream_common(
+        await get_media_record(message_id, chat_id=chat_id), request
+    )
+
+
+async def _stream_common(record: Media | None, request: Request):
     if not record:
         raise HTTPException(status_code=404, detail="Media record not found")
     try:
         part_ids = await get_part_message_ids(record)
-        file_name = record.file_name or f"{message_id}.mp4"
+        file_name = record.file_name or f"{record.message_id}.mp4"
         mime_type = record.mime_type or "video/mp4"
-        chat_id = int(record.chat_id)
+        try:
+            chat_id = int(record.chat_id)
+        except (TypeError, ValueError):
+            chat_id = record.message_id  # 兜底：chat_id 异常时仍尝试拉流
         return await serve_stream(
-            message_id, chat_id, record.size, file_name, mime_type, request,
+            record.message_id, chat_id, record.size, file_name, mime_type, request,
             part_ids=part_ids,
         )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Stream error for message_id={message_id}: {e}")
+        logger.error(f"Stream error for message_id={record.message_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Stream error: {e}")
 
 
 @router.head("/strm/{message_id}")
 @router.head("/stream/{message_id}")
-async def stream_head(message_id: int):
-    record = await get_media_record(message_id)
+@router.head("/strm/{chat_id}/{message_id}")
+@router.head("/stream/{chat_id}/{message_id}")
+async def stream_head(chat_id: str | None = None, message_id: int = 0):
+    record = await get_media_record(message_id, chat_id=chat_id)
     if not record:
         raise HTTPException(status_code=404, detail="Media record not found")
     part_ids = await get_part_message_ids(record)

@@ -305,8 +305,8 @@ class CacheSettings:
         self.media_path: str = str(d.get("media_path", "./media"))
         self.memory_cache_size_mb: int = int(d.get("memory_cache_size_mb", 256))
         self.disk_cache_max_gb: int = int(d.get("disk_cache_max_gb", 50))
-        self.prefetch_enabled: bool = True
-        self.prefetch_chunks: int = 30
+        self.prefetch_enabled: bool = bool(d.get("prefetch_enabled", True))
+        self.prefetch_chunks: int = int(d.get("prefetch_chunks", 30))
 
     @property
     def cache_path(self) -> Path:

@@ -5,9 +5,7 @@ from app.config import settings
 from app.database import async_session
 from app.models import Media, ChannelRule, Category
 from app.media.parser import parse_media_info
-from app.media.strm import generate_strm, remove_old_strm
-from app.media.enricher import enrich_media_safe, add_to_unrecognized
-from app.media.emby_notifier import refresh_library
+from app.media.strm import generate_strm, resolution_tag
 from app.telegram.client import get_client
 from sqlalchemy import select
 from pathlib import Path
@@ -15,8 +13,6 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 MIN_DURATION_SECONDS = 300
-
-_notify_queue: asyncio.Queue = asyncio.Queue()
 
 
 def is_video_message(message) -> bool:
@@ -79,8 +75,41 @@ async def _send_notify(message: str):
 
 
 def _build_scan_notify(ch_name: str, count: int, category: str, items: list[dict]) -> str:
+    """兼容入口（也可直接用 app.telegram.bot.build_scan_notify）。"""
     from app.telegram.bot import build_scan_notify
     return build_scan_notify(ch_name, count, category, items)
+
+
+async def _merge_part_record(channel_id: int, display_name: str, message_id: int, media, duration: int) -> tuple[bool, int | None]:
+    """尝试把 part>1 分片合并进已有的主记录。
+
+    返回 (是否已处理, 关联的主记录 id)。
+    """
+    async with async_session() as session:
+        existing = await session.execute(
+            select(Media).where(
+                Media.chat_id == str(channel_id),
+                Media.title == display_name,
+                Media.parts.is_(None),
+            ).limit(1)
+        )
+        base_record = existing.scalar_one_or_none()
+        if not base_record:
+            return False, None
+        old_parts = base_record.parts or ""
+        base_record.parts = (old_parts + "," + str(message_id)).strip(",")
+        base_record.size = (base_record.size or 0) + (media.file_size or 0)
+        base_record.duration = (base_record.duration or 0) + duration
+        await session.commit()
+        return True, base_record.id
+
+
+async def refresh_library_async():
+    from app.media.emby_notifier import refresh_library
+    try:
+        await refresh_library()
+    except Exception as e:
+        logger.warning(f"Emby refresh 异常: {e}")
 
 
 async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool = True, item_callback=None) -> dict:
@@ -101,6 +130,7 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
         episode_digits = 3 if rule.category == "动漫" else 2
         strm_subdir = await _get_strm_subdir(rule.category)
         count = 0
+        enrich_ids: list[int] = []
         deferred_parts: list[dict] = []
         scanned_items: list[dict] = []
         async for message in client.get_chat_history(channel_id, limit=limit):
@@ -116,21 +146,6 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
 
             fn = media.file_name or f"video_{message.id}.mp4"
             caption = message.caption or ""
-
-            async with async_session() as session:
-                result = await session.execute(
-                    select(Media).where(Media.message_id == message.id)
-                )
-                if result.scalar_one_or_none():
-                    if item_callback:
-                        item_callback(
-                            title=fn,
-                            category=rule.category,
-                            strm_path=None,
-                            action="skipped",
-                            message="已存在",
-                        )
-                    continue
 
             info = parse_media_info(
                 caption=caption,
@@ -166,24 +181,12 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
             part_num = int(part_match.group(1)) if part_match else 0
 
             if part_num > 1 and title:
-                async with async_session() as session:
-                    existing = await session.execute(
-                        select(Media).where(
-                            Media.chat_id == str(channel_id),
-                            Media.title == display_name,
-                            Media.parts.is_(None),
-                        ).limit(1)
-                    )
-                    base_record = existing.scalar_one_or_none()
-                    if base_record:
-                        old_parts = base_record.parts or ""
-                        new_parts = (old_parts + "," + str(message.id)).strip(",")
-                        base_record.parts = new_parts
-                        base_record.size = (base_record.size or 0) + (media.file_size or 0)
-                        base_record.duration = (base_record.duration or 0) + duration
-                        await session.commit()
-                        logger.info(f"合并分片 msg={message.id} → 主消息 {base_record.message_id}")
-                        continue
+                merged, base_id = await _merge_part_record(channel_id, display_name, message.id, media, duration)
+                if merged:
+                    if base_id:
+                        enrich_ids.append(base_id)
+                    logger.info(f"合并分片 msg={message.id}")
+                    continue
                 deferred_parts.append(dict(
                     message_id=message.id, chat_id=str(channel_id),
                     file_name=fn, caption=caption, title=title,
@@ -198,6 +201,7 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
 
             strm_path = generate_strm(
                 message_id=message.id,
+                chat_id=str(channel_id),
                 category=rule.category,
                 title=title,
                 season=info.get("season") if info else None,
@@ -205,9 +209,29 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 year=info.get("year") if info else None,
                 episode_digits=episode_digits,
                 strm_subdir=strm_subdir,
+                resolution=resolution_tag(getattr(media, "width", 0) or 0, getattr(media, "height", 0) or 0),
             )
 
+            # 去重 + 插入在同一个 session 里完成：
+            # (chat_id, message_id) 唯一约束兜底，同一条消息绝不重复入库
             async with async_session() as session:
+                existing = await session.execute(
+                    select(Media).where(
+                        Media.chat_id == str(channel_id),
+                        Media.message_id == message.id,
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    if item_callback:
+                        item_callback(
+                            title=fn,
+                            category=rule.category,
+                            strm_path=None,
+                            action="skipped",
+                            message="已存在",
+                        )
+                    continue
+
                 record = Media(
                     message_id=message.id,
                     chat_id=str(channel_id),
@@ -227,11 +251,21 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                     strm_path=str(strm_path) if strm_path else None,
                 )
                 session.add(record)
-                await session.commit()
-                if settings.enrich.enabled and title:
-                    enrich_result = await enrich_media_safe(record.id)
-                    if not enrich_result.get("success") and settings.tmdb.api_key:
-                        await add_to_unrecognized(record.id, enrich_result.get("reason"))
+                try:
+                    await session.commit()
+                except Exception:
+                    # 并发/重复竞争：唯一索引兜底
+                    await session.rollback()
+                    if item_callback:
+                        item_callback(
+                            title=fn,
+                            category=rule.category,
+                            strm_path=None,
+                            action="skipped",
+                            message="已存在",
+                        )
+                    continue
+                enrich_ids.append(record.id)
                 count += 1
                 if item_callback:
                     item_callback(
@@ -248,27 +282,9 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 })
 
         for dp in deferred_parts:
-            async with async_session() as session:
-                existing = await session.execute(
-                    select(Media).where(
-                        Media.chat_id == dp["chat_id"],
-                        Media.title == dp["display_name"],
-                        Media.parts.is_(None),
-                    ).limit(1)
-                )
-                base_record = existing.scalar_one_or_none()
-                if base_record:
-                    old_parts = base_record.parts or ""
-                    new_parts = (old_parts + "," + str(dp["message_id"])).strip(",")
-                    base_record.parts = new_parts
-                    base_record.size = (base_record.size or 0) + dp["file_size"]
-                    base_record.duration = (base_record.duration or 0) + dp["duration"]
-                    await session.commit()
-                    logger.info(f"合并延迟分片 msg={dp['message_id']} → 主消息 {base_record.message_id}")
-                    continue
-
             strm_path = generate_strm(
                 message_id=dp["message_id"],
+                chat_id=dp["chat_id"],
                 category=rule.category,
                 title=dp["title"],
                 season=dp["info"].get("season") if dp["info"] else None,
@@ -276,6 +292,7 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 year=dp["info"].get("year") if dp["info"] else None,
                 episode_digits=episode_digits,
                 strm_subdir=strm_subdir,
+                resolution=resolution_tag(dp["width"], dp["height"]),
             )
             async with async_session() as session:
                 record = Media(
@@ -295,11 +312,12 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                     strm_path=str(strm_path) if strm_path else None,
                 )
                 session.add(record)
-                await session.commit()
-                if settings.enrich.enabled and dp.get("title"):
-                    enrich_result = await enrich_media_safe(record.id)
-                    if not enrich_result.get("success") and settings.tmdb.api_key:
-                        await add_to_unrecognized(record.id, enrich_result.get("reason"))
+                try:
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    continue
+                enrich_ids.append(record.id)
                 count += 1
                 if item_callback:
                     item_callback(
@@ -310,26 +328,33 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                     )
                 scanned_items.append({
                     "title": dp.get("display_name") or dp.get("title") or dp.get("file_name", ""),
-                    "file_name": dp.get("file_name", ""),
+                    "file_name": dp["file_name"],
                     "category": rule.category,
                     "source_link": dp.get("source_link", ""),
                     "episode": dp["info"].get("episode") if dp.get("info") else None,
                 })
 
         if count > 0:
-            if notify_detailed:
-                notify_text = _build_scan_notify(
-                    ch_name, count, rule.category or "未分类", scanned_items
-                )
-            else:
-                notify_text = (
-                    f"📦 **{ch_name}** 扫描完成\n\n"
-                    f"新增: **{count}** 条\n"
-                    f"分类: {rule.category or '未分类'}"
-                )
-            asyncio.create_task(_send_notify(notify_text))
-            if settings.emby.url and settings.emby.api_key and settings.enrich.enabled:
-                asyncio.create_task(refresh_library())
+            # 刮削开启且配了 TMDB：通知推迟到整批刮削完成，届时带上海报图片
+            from app.media.enrich_queue import enrich_queue
+            deferred_notify = enrich_queue.enqueue_batch(enrich_ids, {
+                "ch_name": ch_name,
+                "category": rule.category or "未分类",
+            })
+            if not deferred_notify:
+                # 未启用刮削 → 立即发文字通知（原行为）
+                if notify_detailed:
+                    from app.telegram.bot import build_scan_notify
+                    notify_text = build_scan_notify(ch_name, count, rule.category or "未分类", scanned_items)
+                else:
+                    notify_text = (
+                        f"📦 **{ch_name}** 扫描完成\n\n"
+                        f"新增: **{count}** 条\n"
+                        f"分类: {rule.category or '未分类'}"
+                    )
+                asyncio.create_task(_send_notify(notify_text))
+                if settings.emby.url and settings.emby.api_key:
+                    asyncio.create_task(refresh_library_async())
         return {"success": True, "message": f"频道 {ch_name} 扫描完成，新增 {count} 条记录"}
 
     except ConnectionError as e:

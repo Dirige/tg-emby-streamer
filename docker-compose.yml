@@ -1,3 +1,8 @@
+# ⚠️ 注意：当前生产环境实际部署方式为 systemd + venv（非 Docker）：
+#   单元: /etc/systemd/system/tg-emby.service
+#   配置: CONFIG_PATH=/home/ubuntu/tg-emby/config/config.yaml
+#   数据: /home/ubuntu/tg-emby/{config,cache,strm}
+# 本文件保留用于可选的容器化部署；若启用 Docker，请按下方路径挂载。
 services:
   tg-emby-streamer:
     image: tg-emby-streamer:local
@@ -6,13 +11,14 @@ services:
     ports:
       - "8001:8001"
     volumes:
-      # 配置文件（必须）
+      # 配置文件（必须；路径指向真实配置位置）
+      - /home/ubuntu/tg-emby/config:/app/config
       - ./config.yaml:/app/config.yaml
       # 代码（开发阶段挂载，方便热更新）
       - ./app:/app/app
       - ./scripts:/app/scripts
       # 运行时数据（数据库、缓存、STRM 文件）
-      - ./data:/app/data
+      - /home/ubuntu/tg-emby:/app/data-external
       # 可选：STRM 文件输出到外部目录（如 Emby 媒体库路径）
       # - /path/to/emby/strm:/app/data/strm
     environment:

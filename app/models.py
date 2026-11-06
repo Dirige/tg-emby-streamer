@@ -1,10 +1,16 @@
 import json
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, Text, func
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, Text, func, Index
 from app.database import Base
 
 
 class Media(Base):
     __tablename__ = "media"
+
+    # 同一条 Telegram 消息（同一频道内的同一 message_id）只允许入库一次；
+    # 同标题不同消息（多版本）可以各自成条。
+    __table_args__ = (
+        Index("uq_media_chat_message", "chat_id", "message_id", unique=True),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     message_id = Column(Integer, nullable=False, index=True)

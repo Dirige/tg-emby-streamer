@@ -78,15 +78,29 @@ class DiskCache:
             self._cleanup()
 
     def _cleanup(self):
-        total = sum(f.stat().st_size for f in self.cache_dir.rglob("*.chunk"))
-        if total > self.max_bytes:
-            files = sorted(self.cache_dir.rglob("*.chunk"), key=lambda f: f.stat().st_atime)
-            for f in files:
-                if total <= self.max_bytes * 0.8:
-                    break
-                size = f.stat().st_size
-                f.unlink()
+        # os.walk 一次收集 (路径, 大小, atime)，避免反复 stat
+        entries: list[tuple[float, os.stat_result, str]] = []
+        for root, _dirs, files in os.walk(self.cache_dir):
+            for name in files:
+                if name.endswith(".chunk"):
+                    p = os.path.join(root, name)
+                    try:
+                        st = os.stat(p)
+                    except OSError:
+                        continue
+                    entries.append((st.st_size, st, p))
+        total = sum(size for size, _st, _p in entries)
+        if total <= self.max_bytes:
+            return
+        entries.sort(key=lambda e: (e[1].st_atime, e[1].st_mtime))
+        for size, st, p in entries:
+            if total <= self.max_bytes * 0.8:
+                break
+            try:
+                os.unlink(p)
                 total -= size
+            except OSError:
+                continue
 
     def has_full_file(self, message_id: int, file_size: int) -> bool:
         file_dir = self.cache_dir / str(message_id)
@@ -106,17 +120,18 @@ class ChunkCache:
         if data is not None:
             return data
 
-        data = self.disk.get(message_id, offset)
+        # 磁盘搬到 executor，避免事件循环被文件 I/O 阻塞
+        loop = asyncio.get_running_loop()
+        data = await loop.run_in_executor(None, self.disk.get, message_id, offset)
         if data is not None:
             self.memory.put(message_id, offset, data)
             return data
 
         fetch_size = size or CHUNK_SIZE
         data = await asyncio.wait_for(fetch_fn(offset, fetch_size), timeout=120)
-        
+
         if len(data) > 0:
             self.memory.put(message_id, offset, data)
-            loop = asyncio.get_running_loop()
             loop.run_in_executor(None, self.disk.put, message_id, offset, data)
         return data
 

@@ -16,6 +16,13 @@ class PrefetchManager:
         if not self.enabled:
             return
 
+        # 已完成任务及时出表，避免长期运行内存累积；任务表过大时不再追加
+        for key in [k for k, v in self._tasks.items() if v.done()]:
+            self._tasks.pop(key, None)
+        if len(self._tasks) > 500:
+            logger.warning(f"Prefetch tasks backlog ({len(self._tasks)}), skipping new prefetch")
+            return
+
         task_key = f"{message_id}:{current_offset}"
 
         if task_key in self._tasks and not self._tasks[task_key].done():

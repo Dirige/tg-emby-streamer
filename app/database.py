@@ -19,6 +19,11 @@ async def init_db():
     async with engine.begin() as conn:
         from app.models import Media, ChannelRule, Category, UnrecognizedMedia
         await conn.run_sync(Base.metadata.create_all)
+        # 复合唯一索引：保证同一频道同一条消息不会重复入库（SQLite 建表后补建）
+        await conn.execute(sa_text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_media_chat_message "
+            "ON media (chat_id, message_id)"
+        ))
         for col, col_type in [
             ("parts", "VARCHAR"),
             ("tmdb_id", "INTEGER"),

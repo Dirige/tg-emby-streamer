@@ -1,6 +1,7 @@
 import re
 import asyncio
 import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -161,8 +162,11 @@ def _display_name(v: PendingVideo) -> str:
 # ── DB Save + STRM ──────────────────────────────────────────────────
 
 async def _save_video(v: PendingVideo, category: str, episode_digits: int = 2) -> Optional[str]:
+    from app.media.strm import resolution_tag
+
     strm_path = generate_strm(
         message_id=v.message_id,
+        chat_id=str(v.chat_id),
         category=category,
         title=v.title,
         season=v.season,
@@ -170,8 +174,19 @@ async def _save_video(v: PendingVideo, category: str, episode_digits: int = 2) -
         year=v.year,
         episode_digits=episode_digits,
         strm_subdir=category,
+        resolution=resolution_tag(v.width, v.height),
     )
+    result: Optional[str] = None
     async with async_session() as session:
+        # 同一条消息（同频道同 message_id）不允许重复入库
+        existing = await session.execute(
+            select(Media).where(
+                Media.chat_id == str(v.chat_id),
+                Media.message_id == v.message_id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            return None  # 已存在 → 调用方提示跳过
         record = Media(
             message_id=v.message_id,
             chat_id=str(v.chat_id),
@@ -190,8 +205,19 @@ async def _save_video(v: PendingVideo, category: str, episode_digits: int = 2) -
             strm_path=str(strm_path) if strm_path else None,
         )
         session.add(record)
-        await session.commit()
-    return str(strm_path) if strm_path else None
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            return None
+        if settings.enrich.enabled and settings.tmdb.api_key:
+            from app.media.enrich_queue import enrich_queue
+            enrich_queue.enqueue_batch([record.id], {
+                "ch_name": v.title or v.file_name or "手动入库",
+                "category": category,
+            })
+        result = str(strm_path) if strm_path else None
+    return result
 
 
 async def _save_videos(conv: Conversation) -> list[dict]:
@@ -207,6 +233,7 @@ async def _save_videos(conv: Conversation) -> list[dict]:
         results.append({
             "video": v,
             "strm_path": strm_path,
+            "skipped": strm_path is None,  # 已存在（重复消息）或生成失败
         })
     return results
 
@@ -522,20 +549,29 @@ async def _handle_callback_query(client: Client, callback: CallbackQuery):
 
         try:
             results = await _save_videos(conv)
+            saved = [r for r in results if r.get("strm_path")]
+            if not saved and results:
+                await callback.message.edit_text("⚠️ 选中的条目都已存在（同一消息不会重复入库）")
+                await callback.answer()
+                return
             # send notification
-            if len(results) == 1:
-                r = results[0]
+            if len(saved) == 1 and not [r for r in results if r.get("skipped")] == results:
+                r = saved[0] if saved else results[0]
                 v = r["video"]
                 display = _display_name(v)
                 notify_text = build_manual_notify_single(display, cat, v, r["strm_path"])
                 await client.send_message(user_id, notify_text)
             else:
-                notify_text = build_manual_notify_batch(conv.series_name or conv.videos[0].title or "未知", cat, results)
+                notify_text = build_manual_notify_batch(
+                    conv.series_name or conv.videos[0].title or "未知", cat, saved or results
+                )
+                if len(results) != len(saved):
+                    notify_text += f"\n\n⚠️ {len(results) - len(saved)} 条已存在，自动跳过"
                 await client.send_message(user_id, notify_text)
 
             # also send system notify if enabled
-            if len(results) == 1:
-                v = results[0]["video"]
+            if len(saved) == 1:
+                v = saved[0]["video"]
                 system_msg = (
                     f"📦 **手动入库**\n\n"
                     f"名称: {_display_name(v)}\n"
@@ -544,7 +580,7 @@ async def _handle_callback_query(client: Client, callback: CallbackQuery):
                 )
             else:
                 system_msg = (
-                    f"📦 **手动入库**（批量 {len(results)} 集）\n\n"
+                    f"📦 **手动入库**（批量 {len(saved)} 集）\n\n"
                     f"剧名: {conv.series_name or conv.videos[0].title or '未知'}\n"
                     f"分类: {cat}"
                 )
@@ -556,7 +592,111 @@ async def _handle_callback_query(client: Client, callback: CallbackQuery):
             await client.send_message(user_id, f"❌ 入库失败：{e}")
 
 
-# ── Client management ───────────────────────────────────────────────
+# ── Enrichment-completion notifications (with poster images) ────────
+
+def build_enriched_notify(meta: dict, results: list[dict]) -> str:
+    """刮削完成后的入库通知文案（纯文字版，也用作相册 caption）。"""
+    ch_name = meta.get("ch_name") or "媒体库"
+    count = len(results)
+    lines = [f"🎬 **{ch_name}** 新增 **{count}** 条 · 刮削完成\n"]
+    for i, item in enumerate(results[:_MAX_DETAIL_ITEMS]):
+        title = item.get("title") or item.get("file_name") or "未知"
+        if item.get("tmdb_title") and item["tmdb_title"] != title:
+            lines.append(f"{i + 1}. **{title}** → {item['tmdb_title']}")
+        else:
+            lines.append(f"{i + 1}. **{title}**")
+        if item.get("episode") is not None:
+            lines[-1] += f" — E{int(item['episode']):02d}"
+        if item.get("category"):
+            lines.append(f"   📂 {item['category']}")
+        link = item.get("source_link", "")
+        if link:
+            lines.append(f"   🔗 [查看原消息]({link})")
+        if not item.get("success") and not item.get("skipped"):
+            reason = item.get("reason") or "识别失败"
+            lines.append(f"   ⚠️ {reason}")
+    if count > _MAX_DETAIL_ITEMS:
+        lines.append(f"\n⋯ 共 {count} 条")
+    return "\n".join(lines)
+
+
+def _collect_posters(results: list[dict], max_photos: int = 10) -> list[str]:
+    """本地海报去重收集（同一文件只发一次，上限 10 张/相册）。"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in results:
+        p = (item.get("poster_path") or "").strip()
+        if p and p not in seen and p not in out:
+            out.append(p)
+        if len(out) >= max_photos:
+            break
+    return out
+
+
+async def _resolve_target(target: str) -> str | int:
+    target_clean = target.lstrip("@")
+    try:
+        return int(target_clean)
+    except ValueError:
+        return target_clean
+
+
+async def _send_media_group(target, photos: list[str], caption: str) -> bool:
+    """用本地海报文件发送相册；Bot 优先，Bot 不可用回退用户账号。"""
+    from pyrogram.types import InputMediaPhoto
+    media = [
+        InputMediaPhoto(p, caption=caption if i == 0 else None)
+        for i, p in enumerate(photos)
+    ]
+    client = await get_bot()
+    if client is None:
+        from app.telegram.client import get_client
+        client = await get_client()
+    await client.send_media_group(target, media=media)
+    return True
+
+
+async def send_enriched_batch_notify(meta: dict, results: list[dict]):
+    """刮削批次完成后的通知：有本地海报发相册，无海报发纯文字。"""
+    if not results:
+        return
+    results = sorted(results, key=lambda r: r.get("media_id", 0))
+    text = build_enriched_notify(meta, results)
+
+    target = settings.notify.target
+    if not target:
+        return
+
+    photos: list[str] = []
+    for p in _collect_posters(results):
+        try:
+            if Path(p).exists():
+                photos.append(p)
+            else:
+                logger.debug(f"海报不存在，跳过: {p}")
+        except Exception:
+            continue
+
+    if not settings.notify.enabled and not photos:
+        return
+
+    try:
+        target_resolved = await _resolve_target(target)
+        if photos:
+            await _send_media_group(target_resolved, photos, text[:1024])
+        else:
+            await send_notify(text)
+        logger.info(f"刮削完成通知已发送（{len(results)} 条，{len(photos)} 张海报）")
+    except Exception as e:
+        logger.warning(f"带图通知发送失败，改用纯文字: {e}")
+        try:
+            await send_notify(text)
+        except Exception as e2:
+            logger.warning(f"纯文字通知也失败: {e2}")
+            await _send_via_user(text)
+
+
+# ── Client management ─────────────────────────────────────────────────
 
 async def _create_bot_client() -> Client:
     proxy = None

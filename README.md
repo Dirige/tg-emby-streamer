@@ -26,31 +26,39 @@ Telegram 频道视频自动入库工具，通过 Pyrogram 连接 Telegram，监�
 ```
 tgemby/
 ├── config.yaml              # 主配置文件（支持环境变量覆盖）
-├── docker-compose.yml       # Docker Compose 一键部署
+├── docker-compose.yml       # Docker Compose 一键部署（可选；生产为 systemd + venv）
 ├── Dockerfile               # Docker 镜像构建
-├── requirements.txt         # Python 依赖
+├── requirements.txt         # Python 依赖（锁定生产版本）
+├── pytest.ini               # 测试配置
 ├── run.py                   # 应用启动入口
 │
 ├── app/                     # 应用核心代码
-│   ├── main.py              # FastAPI 应用入口、认证中间件、登录页
+│   ├── main.py              # FastAPI 应用入口、认证中间件（会话过期/登录限流）、登录页
 │   ├── config.py            # 配置加载（YAML + 环境变量合并）
 │   ├── dashboard.py         # Web API 路由（频道规则 CRUD、扫描、缓存管理）
-│   ├── database.py          # SQLAlchemy 异步引擎与会话管理
-│   ├── models.py            # 数据模型（Media、ChannelRule、Category）
+│   ├── database.py          # SQLAlchemy 异步引擎、会话管理与唯一索引
+│   ├── models.py            # 数据模型（Media(chat_id+message_id 唯一)、ChannelRule、Category）
 │   │
 │   ├── media/               # 媒体处理模块
 │   │   ├── parser.py        # 标题/季/集/年份解析引擎（正则 + 行号）
-│   │   └── strm.py          # STRM 文件生成与清理
+│   │   ├── strm.py          # STRM 生成：多版本命名（`名称 - 1080p`）、入重幂等
+│   │   ├── strm_regen.py    # 全量 STRM 重生成（Web 按钮与 scripts/regen_strm_all.py 共用）
+│   │   ├── enrich_queue.py  # TMDB 刮削后台队列（批量异步，完成后触发带图通知）
+│   │   ├── enricher.py      # TMDB 匹配 / NFO / 海报下载
+│   │   ├── nfo_generator.py # NFO 文件生成
+│   │   ├── image_downloader.py # 海报/剧照下载
+│   │   └── emby_notifier.py # Emby 媒体库刷新触发
 │   │
 │   ├── stream/              # 视频流代理模块
-│   │   ├── router.py        # 流媒体路由（/stream/{id}、/strm/{id}）
+│   │   ├── router.py        # 流媒体路由（/stream/{chat_id}/{message_id} + 兼容旧路由）
 │   │   ├── range_stream.py  # 基于 MTProto 的分块下载器，支持 FileMigrate
-│   │   ├── cache.py         # 内存 LRU + 磁盘两级缓存
-│   │   └── prefetch.py      # 智能预取后续分片
+│   │   ├── cache.py         # 内存 LRU + 磁盘两级缓存（磁盘 I/O 不阻塞事件循环）
+│   │   └── prefetch.py      # 智能预取后续分片（任务表自动回收）
 │   │
 │   ├── telegram/            # Telegram 客户端模块
 │   │   ├── client.py        # Pyrogram 客户端管理（连接/重连/会话）
-│   │   └── monitor.py       # 频道扫描与入库逻辑
+│   │   ├── monitor.py       # 频道扫描与入库（(chat_id, message_id) 唯一去重）
+│   │   └── bot.py           # Bot 交互、手动入库、刮削完成带海报通知
 │   │
 │   ├── scan_state.py        # 扫描进度持久化
 │   └── static/              # 前端静态资源
@@ -58,6 +66,7 @@ tgemby/
 │
 ├── scripts/                 # 工具脚本
 │   ├── generate_session.py  # 生成 Telegram Session String
+│   ├── regen_strm_all.py    # 全量重生成 STRM（URL 格式升级后运行）
 │   ├── init_all.py          # 初始化所有频道规则
 │   ├── init_rules.py        # 初始化规则模板
 │   ├── scan_all.py          # 全量扫描所有频道
@@ -66,6 +75,7 @@ tgemby/
 │   ├── fix_media.py         # 修复媒体记录
 │   └── extract_samples.py   # 提取样本用于调试
 │
+├── tests/                   # pytest 单元测试
 ├── samples/                 # 频道消息样本（用于调试解析规则）
 ├── data/                    # 运行时数据（自动生成）
 │   ├── media.db             # SQLite 主数据库
