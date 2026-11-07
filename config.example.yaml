@@ -1,0 +1,80 @@
+# ============================================
+# TG-Emby-Streamer 配置文件
+# ============================================
+# 将此文件重命名为 config.yaml 并修改参数
+# 所有配置也可通过环境变量覆盖（用于 Docker 部署）
+
+telegram:
+  # Telegram API 凭据 (https://my.telegram.org)
+  api_id: 12345
+  api_hash: "your_api_hash_here"
+  phone: "+8612345678901"
+
+  # 可选：Session String（生成后自动填入，优先于 phone 登录）
+  session_string: ""
+
+  # 需要监控的频道 ID，逗号分隔
+  monitor_channels: "-1001000000010,-1001000000020"
+
+  # 自动监控间隔（分钟），每隔多久扫描一次频道的新消息
+  monitor_interval_minutes: 10
+
+proxy:
+  # 是否启用代理（Telegram 部分地区需要）
+  enabled: false
+  scheme: socks5           # socks5 或 http
+  host: 127.0.0.1
+  port: 10808
+
+server:
+  # Web 服务监听地址
+  host: 0.0.0.0
+  port: 8001
+
+  # 外部访问地址（用于生成 STRM 文件中的流地址）
+  base_url: "http://your-domain.com:8001"
+
+  # 内部访问地址（用于 Docker 内部或局域网）
+  local_url: "http://192.168.1.100:8001"
+
+  # 流媒体访问 Token（留空则不启用认证）
+  stream_token: ""
+
+storage:
+  # 数据存储目录（数据库、缓存、下载文件）
+  data_dir: /app/data
+
+  # STRM 文件输出目录（Docker 内部路径，对应映射的 ./data/strm）
+  strm_dir: /app/data/strm
+
+  # 缓存目录（Docker 内部路径，对应映射的 ./data/cache）
+  cache_dir: /app/data/cache
+
+  # 内存缓存大小（MB）
+  memory_cache_size_mb: 256
+
+  # 磁盘缓存上限（GB）
+  disk_cache_max_gb: 50
+
+database:
+  # 数据库连接 URL（Docker 内部路径，对应映射的 ./data/media.db）
+  url: "sqlite+aiosqlite:////app/data/media.db"
+
+auth:
+  # Web 管理面板登录
+  username: admin
+  password: "changeme"
+
+bot:
+  # 手动入库管理员用户 ID（逗号分隔多个）
+  # 只有这些用户可以将视频转发到 Bot 进行手动入库
+  admin_users: ""
+
+notify:
+  # 入库通知（扫描完成后发送 Telegram 消息）
+  enabled: false
+  target: "8310632282"        # 接收通知的用户 ID
+
+  # Bot Token（从 @BotFather 获取），优先于用户账号发送通知
+  # 留空则使用用户账号发送（通过 Pyrogram 登录的账号）
+  bot_token: ""

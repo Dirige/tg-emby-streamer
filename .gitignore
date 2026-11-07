@@ -1,0 +1,23 @@
+# === 敏感/私人数据（绝不上传）===
+config/config.yaml
+config/media.db
+config/media.db-*
+config/cache/
+config/*.session
+strm/
+backups/
+media/
+*.tar
+*.tar.gz
+
+# === 运行/系统产物 ===
+__pycache__/
+*.pyc
+*.pyo
+.env
+session/
+*.session-journal
+logs/
+*.log
+.opencode/
+.DS_Store

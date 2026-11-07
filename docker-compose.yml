@@ -1,0 +1,22 @@
+services:
+  tg-emby-streamer:
+    image: tg-emby-streamer:local
+    container_name: tg-emby-streamer
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      # 配置 + 数据库（config/config.yaml、config/media.db、config/cache/）
+      - ./config:/config
+      # STRM、NFO、海报输出目录，给 Emby/Jellyfin 扫描
+      - ./strm:/app/data/strm
+    environment:
+      # 镜像默认即 /config/config.yaml，显式声明与挂载路径保持一致
+      - CONFIG_PATH=/config/config.yaml
+      # 清除构建镜像时固化的失效 HTTP 代理（192.168.2.2:6890），
+      # 否则 TMDB / 通知 / 出站 HTTP 都会走这个死代理
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - TZ=Asia/Shanghai
+    network_mode: bridge
+
