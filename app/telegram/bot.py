@@ -468,6 +468,43 @@ async def _send_single_confirm(client: Client, conv: Conversation):
     await client.send_message(conv.user_id, text, reply_markup=btns)
 
 
+BOT_FILES_DIR = Path(settings.cache.dir).parent / "bot_files"
+
+
+async def _save_forwarded_document(client: Client, message: Message):
+    """保存转发的文档（xlsx/css/csv 等）到 bot_files 目录，供服务器侧提取。"""
+    user_id = message.from_user.id if message.from_user else 0
+    if not _is_admin(user_id):
+        return
+
+    doc = message.document
+    if not doc:
+        return
+
+    file_name = ""
+    for attr in (getattr(doc, "attributes", []) or []):
+        if hasattr(attr, "file_name") and attr.file_name:
+            file_name = attr.file_name
+            break
+    if not file_name:
+        file_name = f"doc_{message.id}"
+
+    BOT_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        path = await message.download(file_name=str(BOT_FILES_DIR / file_name))
+        await message.reply(
+            f"📄 文档已保存：`{path}`\n"
+            f"来源: [原消息]({_source_link(message.forward_from_chat.id, message.forward_from_message_id) if message.forward_from_chat else '未知'})"
+        )
+        logger.info(f"Bot saved forwarded document: {path}")
+    except Exception as e:
+        logger.error(f"保存转发文档失败: {e}")
+        try:
+            await message.reply(f"❌ 文档保存失败：{e}")
+        except Exception:
+            pass
+
+
 # ── Pyrogram message handler: forwarded video ───────────────────────
 
 async def _handle_forwarded_video(client: Client, message: Message):
@@ -797,9 +834,15 @@ async def _create_bot_client() -> Client:
         proxy=proxy,
     )
 
-    @client.on_message(filters.forwarded & (filters.video | filters.document))
+    # 视频走原有入库流程；文档（非视频）单独保存
+    @client.on_message(filters.forwarded & filters.video)
     async def fwd_handler(_client, message):
         await _handle_forwarded_video(_client, message)
+
+    # 非视频文档（xlsx/xls/csv 等）也保存下来，供服务器侧提取
+    @client.on_message(filters.forwarded & filters.document)
+    async def doc_handler(_client, message):
+        await _save_forwarded_document(_client, message)
 
     @client.on_message(filters.private & filters.command("start"))
     async def start_handler(_client, message):
