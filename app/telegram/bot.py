@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import async_session
 from app.models import Media, Category
 from app.media.parser import parse_media_info
+from app.media.jav import detect_jav_code, _JAV_PATTERNS
 from app.media.strm import generate_strm
 from sqlalchemy import select
 
@@ -51,6 +52,7 @@ class PendingVideo:
     episode: Optional[int] = None
     season: Optional[int] = None
     year: Optional[int] = None
+    is_jav: bool = False  # 标题来自番号自动识别
 
 @dataclass
 class Conversation:
@@ -59,6 +61,7 @@ class Conversation:
     videos: list[PendingVideo] = field(default_factory=list)
     series_name: Optional[str] = None
     category: Optional[str] = None
+    per_video_titles: bool = False  # 多视频时保留各自的自动识别标题
     collect_task: Optional[asyncio.Task] = None
 
 _conversations: dict[int, Conversation] = {}
@@ -123,6 +126,17 @@ def _source_link(chat_id: int | str, message_id: int) -> str:
     return f"https://t.me/c/{cid}/{message_id}"
 
 
+def _looks_like_jav(text: str) -> bool:
+    """判断已识别的标题本身是否就是标准番号格式（避免重复改写）。"""
+    for pattern, _fmt in _JAV_PATTERNS:
+        m = pattern.fullmatch(text.strip())
+        if m:
+            code = _fmt(m)
+            if code.split("-")[0] not in {"X264", "X265", "H264", "H265", "HEVC"}:
+                return True
+    return False
+
+
 def _fmt_size(b: int) -> str:
     if not b:
         return "-"
@@ -142,11 +156,18 @@ async def _fetch_categories() -> list[str]:
         return [c.name for c in cats]
 
 
-async def _make_category_keyboard_async() -> InlineKeyboardMarkup:
+async def _make_category_keyboard_async(suggest_18plus: bool = False) -> InlineKeyboardMarkup:
     cats = await _fetch_categories()
     if not cats:
         cats = ["电视剧", "电影", "动漫", "海外剧", "18+"]
-    buttons = [[InlineKeyboardButton(c, callback_data=f"cat:{c}")] for c in cats]
+    buttons: list[list[InlineKeyboardButton]] = []
+    # 识别到番号时提供一键 18+ 入库
+    if suggest_18plus:
+        has_18 = any(c == "18+" for c in cats)
+        if has_18:
+            buttons.append([InlineKeyboardButton(
+                "⚡ 全部按 18+ 入库（已识别番号）", callback_data="cat:18+")])
+    buttons.extend([[InlineKeyboardButton(c, callback_data=f"cat:{c}")] for c in cats])
     buttons.append([InlineKeyboardButton("❌ 取消", callback_data="cat:cancel")])
     return InlineKeyboardMarkup(buttons)
 
@@ -227,7 +248,9 @@ async def _save_videos(conv: Conversation) -> list[dict]:
     episode_digits = 3 if is_anime else 2
 
     for i, v in enumerate(conv.videos):
-        if conv.series_name:
+        # 独立标题模式（回复 "-"）：保留每条自动识别的标题，
+        # 不统一改写为剧名 —— 适配番号或不同频道的不同命名
+        if conv.series_name and not conv.per_video_titles:
             v.title = conv.series_name
         strm_path = await _save_video(v, category, episode_digits)
         results.append({
@@ -240,7 +263,7 @@ async def _save_videos(conv: Conversation) -> list[dict]:
 
 # ── Parse forwarded video ───────────────────────────────────────────
 
-def _parse_forwarded(message: Message) -> Optional[PendingVideo]:
+async def _parse_forwarded(message: Message) -> Optional[PendingVideo]:
     media = message.video or message.document
     if not media:
         return None
@@ -254,15 +277,38 @@ def _parse_forwarded(message: Message) -> Optional[PendingVideo]:
     fn = media.file_name or f"video_{fwd_msg_id}.mp4"
     caption = message.caption or ""
 
-    # use existing parser engine
+    # ⚠️ 不同频道命名规则不同：优先按频道配置的 ChannelRule 解析
+    rule = None
+    try:
+        from app.telegram.monitor import _get_rule_for_channel
+        rule = await _get_rule_for_channel(int(chat_id))
+    except Exception:
+        rule = None
+
     info = parse_media_info(
         caption=caption,
+        title_rule=rule.title_rule if rule else None,
+        episode_rule=rule.episode_rule if rule else None,
+        season=rule.season if rule else None,
+        season_rule=rule.season_rule if rule else None,
+        year_rule=rule.year_rule if rule else None,
         filename=fn,
+        filename_rule=rule.filename_rule if rule else None,
     )
+
+    # 番号识别：文件名优先，其次说明文字（18+ 内容唯一稳定的标识）
+    jav_code = detect_jav_code(fn, media.file_name or "", caption)
+    is_jav = False
 
     title = info.get("title") if info and info.get("title") else None
     if not title:
         title = _guess_title_from_filename(fn)
+
+    if jav_code:
+        # 番号比启发式命名更可靠：启发式结果与番号不符时以番号为准
+        if title is None or not _looks_like_jav(title):
+            title = jav_code
+            is_jav = True
 
     episode = info.get("episode") if info else None
     if episode is None:
@@ -271,6 +317,11 @@ def _parse_forwarded(message: Message) -> Optional[PendingVideo]:
     season = info.get("season") if info else None
     if season is None:
         season = _guess_season_from_filename(fn)
+
+    # 番号类视频没有剧集概念，避免误识别 E03 等
+    if is_jav:
+        episode = None
+        season = None
 
     return PendingVideo(
         message_id=fwd_msg_id,
@@ -288,6 +339,7 @@ def _parse_forwarded(message: Message) -> Optional[PendingVideo]:
         title=title,
         episode=episode,
         season=season,
+        is_jav=is_jav,
     )
 
 
@@ -374,12 +426,23 @@ async def _start_processing(client: Client, user_id: int):
         conv.state = ConvState.AWAITING_SERIES_NAME
         v = conv.videos[0]
         guessed = v.title or "未知"
+        hint = ""
+        titles = [x.title for x in conv.videos]
+        if all(titles) and len(set(titles)) == len(titles):
+            titles_view = "\n".join(f"  · `{t}`" for t in titles[:8])
+            hint = (
+                "\n\n各视频识别标题如下（各不相同 —— 如是番号或不同频道命名，"
+                "可回复 **`-`** 保留每条各自标题独立入库）：\n"
+                f"{titles_view}"
+            )
+            if len(conv.videos) > 8:
+                hint += f"\n  ⋯ 共 {len(conv.videos)} 条"
         await client.send_message(
             user_id,
             f"📦 检测到 **{len(conv.videos)}** 个视频，自动识别为剧集模式\n\n"
             f"识别到剧名：`{guessed}`\n"
-            f"如需修改请直接发送新名称，如需确认请发送：`{guessed}`\n\n"
-            f"_或发送 /cancel 取消_",
+            f"如需修改请直接发送新名称，如需确认请发送：`{guessed}`\n"
+            f"_或发送 **`-`** 保留各条独立标题；发送 /cancel 取消_{hint}",
         )
     else:
         v = conv.videos[0]
@@ -391,8 +454,9 @@ async def _send_single_confirm(client: Client, conv: Conversation):
     v = conv.videos[0]
     title = v.title or "（未能识别）"
     ep_str = f" — 第 {v.episode} 集" if v.episode is not None else ""
+    jav_tag = "（番号自动识别）" if v.is_jav else ""
     text = (
-        f"🎬 **识别结果**\n\n"
+        f"🎬 **识别结果**{jav_tag}\n\n"
         f"名称：`{title}`{ep_str}\n\n"
         f"是否修改名称？"
     )
@@ -430,7 +494,7 @@ async def _handle_forwarded_video(client: Client, message: Message):
         await message.reply("⚠️ 请转发来自频道的视频消息（需要保留原始转发信息）")
         return
 
-    parsed = _parse_forwarded(message)
+    parsed = await _parse_forwarded(message)
     if not parsed:
         await message.reply("⚠️ 无法解析该消息")
         return
@@ -486,9 +550,24 @@ async def _handle_text_message(client: Client, message: Message):
         return
 
     if conv.state == ConvState.AWAITING_SERIES_NAME:
+        kb = await _make_category_keyboard_async(
+            suggest_18plus=any(v.is_jav for v in conv.videos)
+        )
+        if text in ("-", "keep", "默认", "/auto"):
+            # 保留每条视频各自识别出的标题（番号 / 不同频道命名）
+            conv.per_video_titles = True
+            conv.state = ConvState.AWAITING_CATEGORY
+            preview = ", ".join(
+                f"`{(v.title or v.file_name or '?')[:40]}`" for v in conv.videos[:5]
+            )
+            extra = f" 等 {len(conv.videos)} 条" if len(conv.videos) > 5 else ""
+            await message.reply(
+                f"✅ 将按各条独立标题入库：\n{preview}{extra}\n\n请选择分类：",
+                reply_markup=kb,
+            )
+            return
         conv.series_name = text
         conv.state = ConvState.AWAITING_CATEGORY
-        kb = await _make_category_keyboard_async()
         await message.reply(
             f"📺 剧集名称：**{text}**\n\n请选择分类：",
             reply_markup=kb,
@@ -498,7 +577,7 @@ async def _handle_text_message(client: Client, message: Message):
         v = conv.videos[0]
         v.title = text
         conv.state = ConvState.AWAITING_CATEGORY
-        kb = await _make_category_keyboard_async()
+        kb = await _make_category_keyboard_async(suggest_18plus=v.is_jav)
         await message.reply(
             f"✅ 名称已修改为：**{text}**\n\n请选择分类：",
             reply_markup=kb,
@@ -518,7 +597,9 @@ async def _handle_callback_query(client: Client, callback: CallbackQuery):
 
     if data == "title:confirm":
         conv.state = ConvState.AWAITING_CATEGORY
-        kb = await _make_category_keyboard_async()
+        kb = await _make_category_keyboard_async(
+            suggest_18plus=any(v.is_jav for v in conv.videos)
+        )
         await callback.message.edit_text(
             f"🎬 **{conv.videos[0].title}**\n\n请选择分类：",
             reply_markup=kb,
@@ -726,9 +807,12 @@ async def _create_bot_client() -> Client:
             "👋 **TG Emby Streamer Bot**\n\n"
             "将我添加到频道，然后转发视频给我即可手动入库。\n\n"
             "**使用方法：**\n"
-            "1. 转发单条视频 → 自动识别名称，交互式确认\n"
-            "2. 转发多条视频 → 自动识别为剧集，只需输入剧名\n"
-            "3. 发送 /cancel → 取消当前操作"
+            "1. 转发单条视频 → 按频道规则/识别番号自动命名，交互式确认（可手动修改）\n"
+            "2. 转发多条视频 → 进入剧集模式，输入剧名统一命名；\n"
+            "   回复 **`-`** 则保留每条独立标题（适合番号/混合命名）\n"
+            "3. 识别到番号（如 SSIS-806、FC2-PPV-1234567）时，可直接点击\n"
+            "   「⚡ 全部按 18+ 入库」一键完成\n"
+            "4. 发送 /cancel → 取消当前操作"
         )
 
     @client.on_message(filters.private & filters.text & ~filters.command(["start", "help"]))
