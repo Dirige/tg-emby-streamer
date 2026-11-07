@@ -553,7 +553,7 @@ async function loadTelegram() {
   allChannelRules = rulesR?.rules || [];
   renderGroupedChannels(allChannelRules);
   renderCategories(catsR?.categories || []);
-  populateScanDropdown(allChannelRules);
+  populateScanDropdown();
 }
 
 function renderGroupedChannels(rules) {
@@ -1004,11 +1004,19 @@ async function triggerEmbyRefresh() {
 }
 
 // ========== Scan ==========
-function populateScanDropdown(rules) {
+async function populateScanDropdown() {
   const sel = document.getElementById('scanChannelSelect');
   if (!sel) return;
-  const items = rules || allChannelRules;
-  sel.innerHTML = '<option value="">-- 选择频道 --</option>' + items.map(r =>
+  // 兜底加载：allChannelRules 仅在访问过 Telegram 页时才会有值
+  if (!allChannelRules.length) {
+    const r = await api('/api/channel-rules');
+    allChannelRules = r?.rules || [];
+  }
+  if (!allChannelRules.length) {
+    sel.innerHTML = '<option value="">⚠️ 暂无频道规则，请先到「Telegram」页添加频道</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">-- 选择频道 --</option>' + allChannelRules.map(r =>
     `<option value="${esc(r.channel_id)}">${esc(r.channel_name || r.channel_id)} (${r.channel_id})</option>`
   ).join('');
 }
