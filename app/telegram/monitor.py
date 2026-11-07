@@ -174,7 +174,7 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
 
             source_link = getattr(message, "link", None) or (
                 f"https://t.me/{ch_username}/{message.id}" if ch_username
-                else f"https://t.me/c/{str(channel_id).lstrip('-')}/{message.id}"
+                else f"https://t.me/c/{str(channel_id).removeprefix('-100')}/{message.id}"
             )
 
             part_match = re.search(r"[_.]\s*part(\d+)", fn, re.I)
@@ -335,7 +335,7 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 })
 
         if count > 0:
-            # 刮削开启且配了 TMDB：通知推迟到整批刮削完成，届时带上海报图片
+            # 通知推迟到刮削完成；18+ 封面走 MetaTube，不依赖 TMDB key。
             from app.media.enrich_queue import enrich_queue
             deferred_notify = enrich_queue.enqueue_batch(enrich_ids, {
                 "ch_name": ch_name,

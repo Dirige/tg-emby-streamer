@@ -1,4 +1,4 @@
-"""TMDB 元数据刮削后台队列。
+"""TMDB / JAV 元数据刮削后台队列。
 
 扫描入库后不再在扫描循环里串行刮削，而是批量丢入队列，由常驻 worker
 异步完成；一个批次的媒体全部刮削完成后触发回调（通知 + Emby 刷新），
@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 
 from app.config import settings
 from app.database import async_session
-from app.models import Media
+from app.models import Media, ChannelRule
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,12 @@ class EnrichQueue:
     def enqueue_batch(self, media_ids: list[int], meta: dict | None = None) -> int | None:
         """把一批新入库的 media id 加入刮削队列。
 
-        返回 batch_id；enrich 未启用/无 key 时返回 None（调用方自行发纯文字通知）。
+        返回 batch_id；enrich 未启用时返回 None（调用方自行发纯文字通知）。
         """
         ids = [m for m in media_ids if m]
         if not ids:
             return None
-        if not (settings.enrich.enabled and settings.tmdb.api_key):
+        if not settings.enrich.enabled:
             return None
         if self._queue is None:
             self.start()
@@ -105,6 +106,9 @@ class EnrichQueue:
             "reason": result.get("reason", ""),
             "skipped": bool(result.get("skipped")),
             "tmdb_title": result.get("tmdb_title") or "",
+            "jav_code": result.get("jav_code") or "",
+            "jav_title": result.get("jav_title") or "",
+            "actors": result.get("actors") or [],
             **record_info,
         })
 
@@ -120,11 +124,21 @@ class EnrichQueue:
                 record = await session.get(Media, media_id)
                 if not record:
                     return {}
+                rule = (await session.execute(
+                    select(ChannelRule).where(ChannelRule.channel_id == record.chat_id)
+                )).scalar_one_or_none()
+                source_link = record.source_link or ""
+                if record.chat_id.startswith("-100") and source_link.startswith("https://t.me/c/"):
+                    source_link = f"https://t.me/c/{record.chat_id[4:]}/{record.message_id}"
                 return {
                     "title": record.title or "",
                     "file_name": record.file_name or "",
                     "category": record.category or "",
-                    "source_link": record.source_link or "",
+                    "source_link": source_link,
+                    "source_name": rule.channel_name if rule else "",
+                    "chat_id": record.chat_id,
+                    "message_id": record.message_id,
+                    "caption": record.caption or "",
                     "poster_path": record.poster_path or "",
                     "strm_path": record.strm_path or "",
                 }

@@ -1,6 +1,7 @@
 import re
 import asyncio
 import logging
+from html import escape
 from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
@@ -124,7 +125,7 @@ def _guess_season_from_filename(filename: str) -> Optional[int]:
 
 
 def _source_link(chat_id: int | str, message_id: int) -> str:
-    cid = str(chat_id).lstrip("-")
+    cid = str(chat_id).removeprefix("-100").lstrip("-")
     return f"https://t.me/c/{cid}/{message_id}"
 
 
@@ -240,7 +241,7 @@ async def _save_video(
         except Exception:
             await session.rollback()
             return None
-        if settings.enrich.enabled and settings.tmdb.api_key:
+        if settings.enrich.enabled:
             from app.media.enrich_queue import enrich_queue
             if record_ids is not None:
                 record_ids.append(mid)  # 批量模式：最后统一入队
@@ -395,7 +396,7 @@ async def _run_jav_batch(user_id: int, codes: list[str], bot_client: Client):
         except Exception as e:
             logger.warning(f"批量结果汇报失败: {e}")
         # 入库记录统一入刮削队列（一个批次 → 一条通知）
-        if record_ids and settings.enrich.enabled and settings.tmdb.api_key:
+        if record_ids and settings.enrich.enabled:
             from app.media.enrich_queue import enrich_queue
             enrich_queue.enqueue_batch(
                 record_ids, {"ch_name": "番号批量检索", "category": JAV_CATEGORY})
@@ -846,7 +847,8 @@ async def _handle_callback_query(client: Client, callback: CallbackQuery):
                     f"剧名: {conv.series_name or conv.videos[0].title or '未知'}\n"
                     f"分类: {cat}"
                 )
-            await send_notify(system_msg)
+            if not settings.enrich.enabled:
+                await send_notify(system_msg)
 
             _conversations.pop(user_id, None)
         except Exception as e:
@@ -855,6 +857,124 @@ async def _handle_callback_query(client: Client, callback: CallbackQuery):
 
 
 # ── Enrichment-completion notifications (with poster images) ────────
+
+_jav_notify_lock = asyncio.Lock()
+_jav_notify_last_sent = 0.0
+_notify_source_names: dict[str, str] = {}
+
+
+def build_jav_notify(item: dict) -> str:
+    """一部影片一份 caption，字段来自该番号，使用 HTML 避免文案破坏链接。"""
+    code = item.get("jav_code") or detect_jav_code(
+        item.get("file_name"), item.get("caption"), item.get("title")
+    ) or "未识别"
+    title = item.get("jav_title") or item.get("title") or "未获取"
+    actors = item.get("actors") or []
+    actor_text = actors if isinstance(actors, str) else "、".join(actors)
+    name = item.get("source_name") or item.get("chat_id") or "未获取"
+    link = item.get("source_link") or ""
+    lines = [
+        "刮削完成\n",
+        f"📛 番号: {escape(str(code))}",
+        f"🎬 标题: {escape(str(title)[:400])}",
+        f"👤 演员: {escape((actor_text or '未获取')[:100])}",
+    ]
+    label = escape(str(name)[:80])
+    if link.startswith("https://t.me/"):
+        label = f'<a href="{escape(link, quote=True)}">{label}</a>'
+    lines.append(f"🔗 来源群组: {label}")
+    if not item.get("success", True):
+        lines.append(f"⚠️ {escape(str(item.get('reason') or '封面未获取')[:120])}")
+    return "\n".join(lines)
+
+
+async def _resolve_notify_source(item: dict) -> dict:
+    item = dict(item)
+    cid = str(item.get("chat_id") or "")
+    if item.get("source_name") or not cid:
+        return item
+    if cid not in _notify_source_names:
+        try:
+            from app.telegram.client import get_client
+            client = await get_client()
+            chat = await client.get_chat(int(cid))
+            _notify_source_names[cid] = chat.title or chat.first_name or cid
+        except Exception as e:
+            logger.warning("无法读取通知来源群组 %s: %s", cid, e)
+            return item
+    item["source_name"] = _notify_source_names[cid]
+    return item
+
+
+async def _send_jav_notify(item: dict) -> bool:
+    from pyrogram.enums import ParseMode
+
+    item = await _resolve_notify_source(item)
+    photo = item.get("poster_path") or ""
+    from app.media import metatube
+    code = item.get("jav_code") or detect_jav_code(item.get("file_name"), item.get("caption"), item.get("title"))
+    expected = metatube.poster_path(code) if code else None
+    # 即使 DB 留有旧值，也不能把 STRM 公用图或 Emby 的旧海报当成本片封面发送。
+    if not photo or expected is None or Path(photo) != expected or not Path(photo).is_file():
+        photo = ""
+        item["success"] = False
+        item["reason"] = item.get("reason") or "对应封面未获取"
+    caption = build_jav_notify(item)
+    target = await _resolve_target(settings.notify.target)
+
+    async def send(client):
+        for attempt in range(2):
+            try:
+                if photo:
+                    await client.send_photo(target, photo, caption=caption, parse_mode=ParseMode.HTML)
+                    logger.info("JAV 带图通知已发送（番号 %s）", code)
+                else:
+                    await client.send_message(
+                        target, caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True
+                    )
+                    logger.info("JAV 文字通知已发送（番号 %s，未获取对应封面）", code)
+                return True
+            except FloodWait as e:
+                if attempt:
+                    raise
+                logger.warning("JAV 通知限流，等待 %ss 后重试", e.value)
+                await asyncio.sleep(e.value + 1)
+
+    bot = await get_bot()
+    if bot is not None:
+        try:
+            return await send(bot)
+        except FloodWait:
+            raise
+        except Exception as e:
+            logger.warning("JAV Bot 通知失败，保留对应封面改用账号发送: %s", e)
+    try:
+        from app.telegram.client import get_client
+        return await send(await get_client())
+    except Exception as e:
+        logger.warning("JAV 通知发送失败: %s", e)
+        return False
+
+
+async def _send_jav_batch(results: list[dict]) -> bool:
+    global _jav_notify_last_sent
+    success = True
+    for item in results:
+        # 不同批次也共享节流，每个番号独立图片/文案，不共用相册的首图 caption。
+        async with _jav_notify_lock:
+            loop = asyncio.get_running_loop()
+            delay = 1.1 - (loop.time() - _jav_notify_last_sent)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            try:
+                sent = await _send_jav_notify(item)
+            except Exception as e:
+                logger.warning("JAV 通知失败 (%s): %s", item.get("jav_code"), e)
+                sent = False
+            _jav_notify_last_sent = loop.time()
+            success = success and sent
+    return success
+
 
 def build_enriched_notify(meta: dict, results: list[dict]) -> str:
     """刮削完成后的入库通知文案（纯文字版，也用作相册 caption）。"""
@@ -888,7 +1008,8 @@ def _collect_posters(results: list[dict], max_photos: int = 10) -> list[str]:
     out: list[str] = []
     for item in results:
         p = (item.get("poster_path") or "").strip()
-        if p and p not in seen and p not in out:
+        if p and p not in seen:
+            seen.add(p)
             out.append(p)
         if len(out) >= max_photos:
             break
@@ -914,20 +1035,29 @@ async def _send_media_group(target, photos: list[str], caption: str) -> bool:
     if client is None:
         from app.telegram.client import get_client
         client = await get_client()
-    await client.send_media_group(target, media=media)
+    if len(photos) == 1:
+        await client.send_photo(target, photos[0], caption=caption)
+    else:
+        await client.send_media_group(target, media=media)
     return True
 
 
-async def send_enriched_batch_notify(meta: dict, results: list[dict]):
-    """刮削批次完成后的通知：有本地海报发相册，无海报发纯文字。"""
-    if not results:
-        return
+async def send_enriched_batch_notify(meta: dict, results: list[dict]) -> bool:
+    """JAV 每个番号独立通知；普通影视保留原来的批量相册通知。"""
+    if not results or not settings.notify.enabled or not settings.notify.target:
+        return False
     results = sorted(results, key=lambda r: r.get("media_id", 0))
+    jav = [r for r in results if r.get("category") == JAV_CATEGORY]
+    ordinary = [r for r in results if r.get("category") != JAV_CATEGORY]
+    jav_sent = await _send_jav_batch(jav) if jav else True
+    if not ordinary:
+        return jav_sent
+    results = ordinary
     text = build_enriched_notify(meta, results)
 
     target = settings.notify.target
     if not target:
-        return
+        return False
 
     photos: list[str] = []
     for p in _collect_posters(results):
@@ -939,23 +1069,22 @@ async def send_enriched_batch_notify(meta: dict, results: list[dict]):
         except Exception:
             continue
 
-    if not settings.notify.enabled and not photos:
-        return
-
     try:
         target_resolved = await _resolve_target(target)
         if photos:
             await _send_media_group(target_resolved, photos, text[:1024])
         else:
-            await send_notify(text)
+            if not await send_notify(text):
+                return False
         logger.info(f"刮削完成通知已发送（{len(results)} 条，{len(photos)} 张海报）")
+        return jav_sent
     except Exception as e:
         logger.warning(f"带图通知发送失败，改用纯文字: {e}")
         try:
-            await send_notify(text)
+            return bool(await send_notify(text)) and jav_sent
         except Exception as e2:
             logger.warning(f"纯文字通知也失败: {e2}")
-            await _send_via_user(text)
+            return bool(await _send_via_user(text)) and jav_sent
 
 
 # ── Client management ─────────────────────────────────────────────────

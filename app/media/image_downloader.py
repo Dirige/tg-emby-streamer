@@ -1,21 +1,43 @@
 import logging
+import os
+import tempfile
 from pathlib import Path
 import httpx
 
 logger = logging.getLogger(__name__)
 
 
+def _is_image(data: bytes) -> bool:
+    return (
+        data.startswith((b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n"))
+        or (data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+    )
+
+
 async def _download_image(url: str, dest: Path) -> bool:
     if not url or not dest:
         return False
-    if dest.exists():
-        return True
+    temporary = None
     try:
+        if dest.is_file():
+            try:
+                with dest.open("rb") as cached:
+                    if _is_image(cached.read(16)):
+                        return True
+            except OSError:
+                # 旧缓存不可读时尝试原子替换，不让异常跳过下载兜底。
+                pass
         dest.parent.mkdir(parents=True, exist_ok=True)
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             r = await client.get(url)
-            if r.status_code == 200:
-                dest.write_bytes(r.content)
+            if r.status_code == 200 and _is_image(r.content):
+                # 原子替换，避免并发通知读到正在写入的图片。
+                with tempfile.NamedTemporaryFile(dir=dest.parent, prefix=f".{dest.name}.", delete=False) as f:
+                    temporary = Path(f.name)
+                    f.write(r.content)
+                temporary.chmod(0o644)
+                os.replace(temporary, dest)
+                temporary = None
                 logger.info(f"Downloaded image: {dest}")
                 return True
             logger.warning(f"Image download failed {r.status_code}: {url}")
@@ -23,6 +45,9 @@ async def _download_image(url: str, dest: Path) -> bool:
     except Exception as e:
         logger.warning(f"Image download error {url}: {e}")
         return False
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _get_target_dir(strm_path: str | None, category: str, tmdb_type: str) -> Path | None:

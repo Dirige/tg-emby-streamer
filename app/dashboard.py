@@ -1000,6 +1000,42 @@ async def regen_strm():
 
 # ========== Notification Settings ==========
 
+@router.post("/api/notification/test")
+async def test_media_notification(request: Request):
+    """只测试指定的已有记录，使用运行中的 Telegram 连接发送到配置的接收人。"""
+    try:
+        body = await request.json()
+        media_id = int(body.get("media_id", 0))
+        if media_id <= 0:
+            raise ValueError
+    except (ValueError, TypeError, AttributeError):
+        return {"success": False, "message": "请指定有效的 media_id"}
+    if not settings.notify.enabled or not settings.notify.target:
+        return {"success": False, "message": "通知未开启或未设置接收人"}
+    from app.media.enrich_queue import enrich_queue
+    from app.media.enricher import enrich_media_safe
+    from app.telegram.bot import send_enriched_batch_notify
+
+    if not await enrich_queue._load_record(media_id):
+        return {"success": False, "message": "记录不存在"}
+    result = await enrich_media_safe(media_id)
+    info = await enrich_queue._load_record(media_id)
+    sent = await send_enriched_batch_notify(
+        {"ch_name": "通知格式测试"}, [{"media_id": media_id, **result, **info}]
+    )
+    return {
+        "success": sent,
+        "media_id": media_id,
+        "jav_code": result.get("jav_code", ""),
+        "has_poster": bool(info.get("poster_path")),
+        "enrich_reason": result.get("reason", ""),
+        "message": (
+            ("带图测试通知已发送" if info.get("poster_path") else "文字测试通知已发送（未取得封面）")
+            if sent else "通知发送失败，请查看服务日志"
+        ),
+    }
+
+
 @router.get("/api/notification/settings")
 async def get_notification_settings():
     return {

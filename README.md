@@ -16,7 +16,7 @@ Telegram 频道视频自动入库工具，通过 Pyrogram 连接 Telegram，监�
 - **Web 管理面板** — 深色主题 SPA，在线管理频道规则、查看媒体库、手动扫描、缓存管理
 - **多分类支持** — 电视剧、电影、动漫、综艺、纪录片、18+ 等多分类独立目录
 - **代理支持** — 支持 SOCKS5/HTTP 代理连接（Telegram 封锁地区必备）
-- **通知推送** — 入库完成后通过 Telegram 发送通知
+- **通知推送** — 刮削完成后带图通知；JAV 每个番号独立显示标题、演员和来源群组
 - **全量入库** — 一键扫描所有已启用频道，自动跳过已入库记录
 
 ---
@@ -43,8 +43,10 @@ tgemby/
 │   │   ├── parser.py        # 标题/季/集/年份解析引擎（正则 + 行号）
 │   │   ├── strm.py          # STRM 生成：多版本命名（`名称 - 1080p`）、入重幂等
 │   │   ├── strm_regen.py    # 全量 STRM 重生成（Web 按钮与 scripts/regen_strm_all.py 共用）
-│   │   ├── enrich_queue.py  # TMDB 刮削后台队列（批量异步，完成后触发带图通知）
-│   │   ├── enricher.py      # TMDB 匹配 / NFO / 海报下载
+│   │   ├── enrich_queue.py  # TMDB / JAV 刮削后台队列（完成后触发带图通知）
+│   │   ├── enricher.py      # TMDB 匹配 / JAV 封面 / NFO
+│   │   ├── metatube.py      # JAV 番号精确匹配与独立推送封面缓存
+│   │   ├── jav_metadata.py  # 原消息 / NFO 的标题和演员字段
 │   │   ├── nfo_generator.py # NFO 文件生成
 │   │   ├── image_downloader.py # 海报/剧照下载
 │   │   └── emby_notifier.py # Emby 媒体库刷新触发
@@ -493,6 +495,11 @@ http://your-domain.com:8001/stream/5734?token=your_secure_token
 
 **18+ 内容**（可选）：
 - 可单独作为一个媒体库，设置访问权限限制
+- TG 推送的 JAV 封面和字段走 MetaTube，不依赖 TMDB API Key。
+- MetaTube 服务默认 `http://127.0.0.1:8082`，可用 `METATUBE_URL` 环境变量调整。
+- 推送封面按番号缓存在 `storage.cache_dir` 同级的 `jav_posters/`，与 Emby 的 STRM 海报隔离，避免共用图片或被插件覆盖。
+- 通知格式：`刮削完成`、`📛 番号`、`🎬 标题`、`👤 演员`、`🔗 来源群组`。优先使用原消息中的中文片名/演员，缺失时取对应番号的 NFO / MetaTube；缺图明确提示，不挪用其他番号的图片。
+- 补图脚本 `scripts/backfill_18plus_posters.py --media-id <ID>` 仅处理指定记录且不发送通知；请用与 systemd 服务相同的账号运行，避免生成 root 所有的目录。
 
 ### Docker 部署建议
 

@@ -7,7 +7,7 @@ from app.config import settings
 from app.database import async_session
 from app.models import Media, UnrecognizedMedia
 from app.media.nfo_generator import generate_nfo, generate_episode_nfo
-from app.media.image_downloader import download_images, download_episode_still
+from app.media.image_downloader import download_images, download_episode_still, _download_image, _is_image
 
 logger = logging.getLogger(__name__)
 
@@ -138,13 +138,52 @@ def _parse_year_from_title(title: str) -> int | None:
 
 
 async def enrich_media(media_id: int) -> dict:
-    if not settings.tmdb.api_key:
-        return {"success": False, "reason": "TMDB API Key 未配置，请在「元数据」页面设置"}
-
     async with async_session() as session:
         record = await session.get(Media, media_id)
         if not record:
             return {"success": False, "reason": "记录不存在"}
+        # JAV 完全独立于 TMDB；没有 TMDB key 也必须能取得封面和通知字段。
+        if record.category == "18+":
+            from app.media import metatube
+            from app.media.jav import detect_jav_code
+            from app.media.jav_metadata import notification_metadata
+
+            code = detect_jav_code(record.file_name, record.caption, record.title)
+            if not code:
+                record.poster_path = None
+                await session.commit()
+                return {"success": False, "reason": "未识别到番号"}
+            movie = await metatube.find_movie(code)
+            metadata = notification_metadata(record, code, movie)
+            # 推送缓存与 Emby 的海报目录隔离；不沿用公用或被插件写错的图片。
+            record.poster_path = None
+            images = {}
+            poster = metatube.poster_path(code)
+            downloaded = False
+            if movie:
+                downloaded = await _download_image(movie["cover"], poster)
+                if not downloaded and movie.get("cover_fallback"):
+                    downloaded = await _download_image(movie["cover_fallback"], poster)
+            elif poster.is_file():
+                # 上游临时不可用时，已验证的本番号缓存仍可用；绝不回退共享图。
+                try:
+                    with poster.open("rb") as f:
+                        downloaded = _is_image(f.read(16))
+                except OSError:
+                    pass
+            if downloaded:
+                record.poster_path = str(poster)
+                images["poster_path"] = str(poster)
+            await session.commit()
+            success = bool(record.poster_path)
+            return {
+                **metadata,
+                "success": success,
+                "images": images,
+                "reason": "" if success else ("MetaTube 封面下载失败" if movie else "MetaTube 未匹配到对应番号"),
+            }
+        if not settings.tmdb.api_key:
+            return {"success": False, "reason": "TMDB API Key 未配置，请在「元数据」页面设置"}
         if record.tmdb_id:
             tmdb_type = record.tmdb_type or CATEGORY_TO_TMDB_TYPE.get(record.category or "", "movie")
             if tmdb_type == "tv" and record.strm_path and record.title:
@@ -154,10 +193,6 @@ async def enrich_media(media_id: int) -> dict:
             return {"success": True, "message": "已存在 TMDB 元数据"}
 
         category = record.category or ""
-        # 18+ 由 Emby MetaTube 插件刮削，无需 TMDB 处理
-        if category == "18+":
-            return {"success": True, "message": "18+ 跳过 TMDB 由 MetaTube 处理", "skipped": True}
-
         title = record.title or record.file_name or ""
         if not title:
             return {"success": False, "reason": "缺少标题"}
