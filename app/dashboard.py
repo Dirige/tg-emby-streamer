@@ -688,6 +688,59 @@ async def manual_enrich(media_id: int):
     return result
 
 
+@router.post("/api/tmdb/test")
+async def test_tmdb_connection(request: Request):
+    """服务端代理测试 TMDB：浏览器直连会被 CORS/被墙拦截，必须走服务端。"""
+    import httpx
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tmdb = body.get("tmdb") or {}
+    api_key = tmdb.get("api_key") or settings.tmdb.api_key
+    api_base = (tmdb.get("api_base") or settings.tmdb.api_base or "").rstrip("/")
+    if not api_key:
+        return {"success": False, "message": "未配置 API Key"}
+    if not api_base:
+        return {"success": False, "message": "未配置 API 地址"}
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            r = await client.get(f"{api_base}/configuration?api_key={api_key}")
+        if r.status_code == 200:
+            return {"success": True, "message": "TMDB 连接正常"}
+        if r.status_code == 401:
+            return {"success": False, "message": "TMDB 返回 401：API Key 无效"}
+        return {"success": False, "message": f"TMDB 返回 {r.status_code}，检查反代地址"}
+    except Exception as e:
+        return {"success": False, "message": f"TMDB 连接失败: {e}"}
+
+
+@router.post("/api/emby/test")
+async def test_emby_connection(request: Request):
+    """服务端代理测试 Emby：浏览器连 127.0.0.1 指向的是用户本机，必须走服务端。"""
+    import httpx
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    emby = body.get("emby") or {}
+    url = (emby.get("url") or settings.emby.url or "").rstrip("/")
+    api_key = emby.get("api_key") or settings.emby.api_key
+    if not url or not api_key:
+        return {"success": False, "message": "未配置 Emby 地址或 API Key"}
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            r = await client.get(f"{url}/emby/System/Info", params={"api_key": api_key})
+        if r.status_code == 200:
+            name = r.json().get("ServerName") or "Emby"
+            return {"success": True, "message": f"Emby 连接正常: {name}"}
+        if r.status_code == 401:
+            return {"success": False, "message": "Emby 返回 401：API Key 无效"}
+        return {"success": False, "message": f"Emby 返回 {r.status_code}"}
+    except Exception as e:
+        return {"success": False, "message": f"Emby 连接失败: {e}"}
+
+
 @router.post("/api/emby/refresh")
 async def manual_emby_refresh():
     from app.media.emby_notifier import refresh_library

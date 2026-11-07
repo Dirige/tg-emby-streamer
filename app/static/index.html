@@ -965,36 +965,24 @@ async function saveTmdbSettings() {
 
 async function tmdbTest() {
   const key = document.getElementById('s_tmdb_key').value;
-  if (!key) { toast('请先填写 API Key', 'error'); return; }
   const base = document.getElementById('s_tmdb_api').value || 'https://tmdb.255432.xyz/api/3';
-  toast('测试 TMDB 连接...', 'info');
-  try {
-    const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 10000);
-    const r = await fetch(`${base}/search/movie?api_key=${key}&query=test&language=zh-CN`, { signal: ctrl.signal });
-    if (r.status === 200) toast('✅ TMDB 连接正常', 'success');
-    else toast('❌ TMDB 返回 ' + r.status, 'error');
-  } catch (e) {
-    toast('❌ TMDB 连接失败: ' + e.message, 'error');
-  }
+  if (!key) { toast('请先填写 API Key', 'error'); return; }
+  toast('测试 TMDB 连接（服务端发起）...', 'info');
+  // 服务端代理测试：浏览器直连 TMDB 会被 CORS/网络策略拦截
+  const r = await apiPost('/api/tmdb/test', { tmdb: { api_key: key, api_base: base } });
+  if (r?.success) toast('✅ ' + r.message, 'success');
+  else toast('❌ ' + (r?.message || '测试失败'), 'error');
 }
 
 async function testEmby() {
-  const url = document.getElementById('s_emby_url').value;
-  const key = document.getElementById('s_emby_key').value;
+  const url = document.getElementById('s_emby_url').value.trim();
+  const key = document.getElementById('s_emby_key').value.trim();
   if (!url || !key) { toast('请先填写 Emby 地址和 API Key', 'error'); return; }
-  toast('测试 Emby 连接...', 'info');
-  try {
-    const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 10000);
-    const r = await fetch(`${url}/emby/System/Info?api_key=${key}`, { signal: ctrl.signal });
-    if (r.status === 200) {
-      const info = await r.json();
-      toast('✅ Emby 连接正常: ' + (info.ServerName || ''), 'success');
-    } else toast('❌ Emby 返回 ' + r.status, 'error');
-  } catch (e) {
-    toast('❌ Emby 连接失败: ' + e.message, 'error');
-  }
+  toast('测试 Emby 连接（服务端发起）...', 'info');
+  // 服务端代理测试：浏览器连 127.0.0.1 会指向用户本机
+  const r = await apiPost('/api/emby/test', { emby: { url, api_key: key } });
+  if (r?.success) toast('✅ ' + r.message, 'success');
+  else toast('❌ ' + (r?.message || '测试失败'), 'error');
 }
 
 async function triggerEmbyRefresh() {
