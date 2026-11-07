@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 from pyrogram import Client, filters
+from pyrogram.errors import FloodWait
 from pyrogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -16,6 +17,7 @@ from app.models import Media, Category
 from app.media.parser import parse_media_info
 from app.media.jav import detect_jav_code, _JAV_PATTERNS
 from app.media.strm import generate_strm
+from app.telegram import jav_fetcher
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -182,7 +184,12 @@ def _display_name(v: PendingVideo) -> str:
 
 # ── DB Save + STRM ──────────────────────────────────────────────────
 
-async def _save_video(v: PendingVideo, category: str, episode_digits: int = 2) -> Optional[str]:
+async def _save_video(
+    v: PendingVideo,
+    category: str,
+    episode_digits: int = 2,
+    record_ids: Optional[list] = None,   # 提供时暂不入刮削队列，id 收集后由调用方统一批量入队
+) -> Optional[str]:
     from app.media.strm import resolution_tag
 
     strm_path = generate_strm(
@@ -227,16 +234,21 @@ async def _save_video(v: PendingVideo, category: str, episode_digits: int = 2) -
         )
         session.add(record)
         try:
+            await session.flush()
+            mid = record.id
             await session.commit()
         except Exception:
             await session.rollback()
             return None
         if settings.enrich.enabled and settings.tmdb.api_key:
             from app.media.enrich_queue import enrich_queue
-            enrich_queue.enqueue_batch([record.id], {
-                "ch_name": v.title or v.file_name or "手动入库",
-                "category": category,
-            })
+            if record_ids is not None:
+                record_ids.append(mid)  # 批量模式：最后统一入队
+            else:
+                enrich_queue.enqueue_batch([mid], {
+                    "ch_name": v.title or v.file_name or "手动入库",
+                    "category": category,
+                })
         result = str(strm_path) if strm_path else None
     return result
 
@@ -259,6 +271,135 @@ async def _save_videos(conv: Conversation) -> list[dict]:
             "skipped": strm_path is None,  # 已存在（重复消息）或生成失败
         })
     return results
+
+
+# ── 番号搜索取片（/jav、/javbatch）────────────────────────────────
+
+JAV_CATEGORY = "18+"
+
+_jav_batch: dict = {"task": None, "stop": False}
+
+
+def _parse_code_list(text: str, cap: int = 300) -> list[str]:
+    """从粘贴文本中解析番号列表（去重保序）。"""
+    token_re = re.compile(r"(?:FC2[-_ ]?PPV[-_ ]?\d{6,10}|[A-Za-z]{2,6}[-_ ]?\d{2,5})")
+    codes: list[str] = []
+    seen: set[str] = set()
+    for m in token_re.finditer(text):
+        norm = detect_jav_code(m.group(0))
+        if norm and norm not in seen:
+            seen.add(norm)
+            codes.append(norm)
+            if len(codes) >= cap:
+                break
+    return codes
+
+
+async def _code_in_library(code: str) -> bool:
+    async with async_session() as session:
+        result = await session.execute(
+            select(Media.id).where(
+                Media.category == JAV_CATEGORY,
+                Media.title.ilike(f"%{code}%"),
+            ).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+
+def _pending_from_search(code: str, chat_id: int, msg) -> PendingVideo:
+    media = msg.video or msg.document
+    fn = ""
+    for attr in (getattr(media, "attributes", []) or []):
+        if hasattr(attr, "file_name") and attr.file_name:
+            fn = attr.file_name
+    cap = jav_fetcher.safe_text(msg.caption) or fn
+    # 标题取说明第一行（通常以「番号 片名」开头）；不以番号开头则直接用番号
+    first_line = cap.strip().splitlines()[0].strip() if cap else ""
+    title = first_line if first_line.upper().startswith(code.upper()) else code
+    return PendingVideo(
+        message_id=msg.id,
+        chat_id=chat_id,
+        file_name=fn or f"{code}.mp4",
+        file_id=getattr(media, "file_id", "") or "",
+        file_unique_id=getattr(media, "file_unique_id", "") or "",
+        size=getattr(media, "file_size", 0) or 0,
+        duration=getattr(msg.video, "duration", 0) if msg.video else 0,
+        mime_type=getattr(media, "mime_type", "") or "video/mp4",
+        width=getattr(msg.video, "width", 0) if msg.video else 0,
+        height=getattr(msg.video, "height", 0) if msg.video else 0,
+        caption=cap,
+        source_link=_source_link(chat_id, msg.id),
+        title=title,
+        is_jav=True,
+    )
+
+
+async def _jav_ingest(code: str, record_ids: Optional[list] = None) -> dict:
+    """搜索单个番号并入库。status: ok / in_library / not_found / duplicate / error"""
+    code = code.strip().upper()
+    try:
+        if await _code_in_library(code):
+            return {"code": code, "status": "in_library"}
+        chat_id, msg = await jav_fetcher.find_video(code)
+        if msg is None:
+            return {"code": code, "status": "not_found"}
+        v = _pending_from_search(code, chat_id, msg)
+        strm_path = await _save_video(v, JAV_CATEGORY, record_ids=record_ids)
+        if strm_path is None:
+            return {"code": code, "status": "duplicate"}
+        return {"code": code, "status": "ok", "strm": strm_path,
+                "title": v.title, "source_link": v.source_link}
+    except Exception as e:
+        logger.warning(f"番号 {code} 检索入库失败: {e}")
+        return {"code": code, "status": "error", "error": str(e)}
+
+
+async def _run_jav_batch(user_id: int, codes: list[str], bot_client: Client):
+    """后台批量检索入库；结束时统一入刮削队列 → 仅推送一条批量通知。"""
+    _jav_batch["stop"] = False
+    results: list[dict] = []
+    record_ids: list[int] = []
+    total = len(codes)
+    try:
+        for i, code in enumerate(codes):
+            if _jav_batch["stop"]:
+                break
+            res = await _jav_ingest(code, record_ids=record_ids)
+            results.append(res)
+            if (i + 1) % 25 == 0:
+                ok = sum(1 for r in results if r["status"] == "ok")
+                try:
+                    await bot_client.send_message(
+                        user_id, f"⏳ 进度 {i + 1}/{total} · ✅ 已入库 {ok} 条")
+                except Exception:
+                    pass
+            await asyncio.sleep(3)  # 检索间隔，避免触发搜索限流
+    finally:
+        ok = [r for r in results if r["status"] == "ok"]
+        lib = [r["code"] for r in results if r["status"] == "in_library"]
+        miss = [r["code"] for r in results if r["status"] == "not_found"]
+        err = [r for r in results if r["status"] == "error"]
+        try:
+            lines = [
+                f"📊 **番号批量检索{'中止' if _jav_batch['stop'] else '完成'}**\n",
+                f"✅ 入库 **{len(ok)}** 条（刮削完成后自动推送海报通知）",
+            ]
+            if lib:
+                lines.append(f"ℹ️ 已在库 {len(lib)} 条：{', '.join(lib[:15])}{' …' if len(lib) > 15 else ''}")
+            if miss:
+                lines.append(f"❌ 未找到 {len(miss)} 条：{', '.join(miss[:20])}{' …' if len(miss) > 20 else ''}")
+            if err:
+                err_view = ", ".join(f"`{r['code']}`" for r in err[:10])
+                lines.append(f"⚠️ 失败 {len(err)} 条：{err_view}{' …' if len(err) > 10 else ''}")
+            await bot_client.send_message(user_id, "\n".join(lines))
+        except Exception as e:
+            logger.warning(f"批量结果汇报失败: {e}")
+        # 入库记录统一入刮削队列（一个批次 → 一条通知）
+        if record_ids and settings.enrich.enabled and settings.tmdb.api_key:
+            from app.media.enrich_queue import enrich_queue
+            enrich_queue.enqueue_batch(
+                record_ids, {"ch_name": "番号批量检索", "category": JAV_CATEGORY})
+        _jav_batch["results"] = results
 
 
 # ── Parse forwarded video ───────────────────────────────────────────
@@ -586,6 +727,9 @@ async def _handle_text_message(client: Client, message: Message):
     if not conv or conv.state == ConvState.IDLE:
         return
 
+    if text.startswith("/"):
+        return  # 其他命令不进入会话状态机
+
     if conv.state == ConvState.AWAITING_SERIES_NAME:
         kb = await _make_category_keyboard_async(
             suggest_18plus=any(v.is_jav for v in conv.videos)
@@ -834,6 +978,84 @@ async def _create_bot_client() -> Client:
         proxy=proxy,
     )
 
+    @client.on_message(filters.private & filters.command("jav"))
+    async def jav_handler(_client: Client, message: Message):
+        user_id = message.from_user.id
+        if not _is_admin(user_id):
+            return
+        task = _jav_batch.get("task")
+        if task and not task.done():
+            await message.reply("⏳ 批量任务进行中（/javbatch stop 可中止），请稍后再试")
+            return
+        arg = message.text.split(maxsplit=1)[1].strip() if message.text and " " in message.text else ""
+        code = detect_jav_code(arg) or detect_jav_code(arg.replace(" ", ""))
+        if not code:
+            await message.reply("用法：`/jav 番号`（如 `/jav SSIS-806`）")
+            return
+        _m = await message.reply(f"🔍 正在检索 **{code}** ...")
+        res = await _jav_ingest(code)
+        if res["status"] == "ok":
+            await _m.edit_text(
+                f"✅ **{code}** 已按 18+ 入库\n\n"
+                f"📺 `{res['title']}`\n"
+                f"🔗 [资源消息]({res['source_link']})\n\n"
+                f"_元数据刮削完成后会自动推送海报通知_"
+            )
+        elif res["status"] == "in_library":
+            await _m.edit_text(f"ℹ️ **{code}** 已在库中，跳过")
+        elif res["status"] == "duplicate":
+            await _m.edit_text(f"⚠️ **{code}** 同一来源消息已入库，跳过")
+        else:
+            await _m.edit_text(
+                f"❌ **{code}** 资源频道未找到正片\n\n"
+                f"可发送 `/javverify {code}` 向极搜验证番号有效性（单条，低频）")
+
+    @client.on_message(filters.private & filters.command("javverify"))
+    async def javverify_handler(_client: Client, message: Message):
+        user_id = message.from_user.id
+        if not _is_admin(user_id):
+            return
+        arg = message.text.split(maxsplit=1)[1].strip() if message.text and " " in message.text else ""
+        code = detect_jav_code(arg) or detect_jav_code(arg.replace(" ", ""))
+        if not code:
+            await message.reply("用法：`/javverify 番号`")
+            return
+        _m = await message.reply(f"🔍 向极搜查询 **{code}** ...")
+        r = await jav_fetcher.verify_via_jisou(code)
+        if r["ok"]:
+            await _m.edit_text(f"✅ 极搜已确认番号 **{code}** 有效（库内暂无正片）\n\n`{r['info'][:600]}`")
+        else:
+            await _m.edit_text(f"❌ 极搜验证失败：{r['reason']}")
+
+    @client.on_message(filters.private & filters.command("javbatch"))
+    async def javbatch_handler(_client: Client, message: Message):
+        user_id = message.from_user.id
+        if not _is_admin(user_id):
+            return
+        task = _jav_batch.get("task")
+        arg = message.text.split(maxsplit=1)[1].strip() if message.text and " " in message.text else ""
+        if arg.lower() in ("stop", "cancel", "取消"):
+            if task and not task.done():
+                _jav_batch["stop"] = True
+                await message.reply("🛑 正在请求中止，当前条目完成后停止")
+            else:
+                await message.reply("没有正在运行的批量任务")
+            return
+        if task and not task.done():
+            await message.reply("⏳ 已有批量任务在运行（/javbatch stop 中止）")
+            return
+        reply_text = message.reply_to_message.text if (message.reply_to_message and message.reply_to_message.text) else ""
+        codes = _parse_code_list(arg) or _parse_code_list(reply_text)
+        if not codes:
+            await message.reply(
+                "用法：`/javbatch 番号1 番号2 …`（一行多行均可，单条消息内最多 300 个）\n"
+                "或回复一条含番号列表的消息发送此命令\n\n"
+                "中止：`/javbatch stop`；进度每 25 条汇报一次")
+            return
+        await message.reply(f"🚀 开始批量检索 **{len(codes)}** 个番号（纯检索不向任何群发消息）…")
+        _jav_batch["task"] = asyncio.create_task(
+            _run_jav_batch(user_id, codes, _client))
+
     # 视频走原有入库流程；文档（非视频）单独保存
     @client.on_message(filters.forwarded & filters.video)
     async def fwd_handler(_client, message):
@@ -855,7 +1077,11 @@ async def _create_bot_client() -> Client:
             "   回复 **`-`** 则保留每条独立标题（适合番号/混合命名）\n"
             "3. 识别到番号（如 SSIS-806、FC2-PPV-1234567）时，可直接点击\n"
             "   「⚡ 全部按 18+ 入库」一键完成\n"
-            "4. 发送 /cancel → 取消当前操作"
+            "4. `/jav 番号` → 在资源频道搜索正片并自动入库（不发群消息）\n"
+            "5. `/javbatch 番号1 番号2…` → 批量检索入库（后台执行，\n"
+            "   完成后推送一条汇总 + 海报通知；/javbatch stop 中止）\n"
+            "6. `/javverify 番号` → 通过极搜验证番号有效性\n"
+            "7. 发送 /cancel → 取消当前操作"
         )
 
     @client.on_message(filters.private & filters.text & ~filters.command(["start", "help"]))
@@ -869,21 +1095,42 @@ async def _create_bot_client() -> Client:
     return client
 
 
-async def start_bot_handler():
+async def start_bot_handler(retries: int = 5):
     global _bot_client, _bot_started
     if _bot_started:
         return
     if not settings.notify.bot_token:
         logger.warning("Bot token not configured — bot handler not started")
         return
-    try:
-        _bot_client = await _create_bot_client()
-        await _bot_client.start()
-        _bot_started = True
-        logger.info("Bot handler started successfully")
-    except Exception as e:
-        logger.error(f"Bot handler start failed: {e}")
-        _bot_client = None
+    # 重启/重建连接可能触发 Telegram 的 bot 登录限流（FLOOD_WAIT），
+    # 自动等待并重试，避免人工再重启
+    delay = 5.0
+    for _ in range(max(1, retries)):
+        try:
+            _bot_client = await _create_bot_client()
+            await _bot_client.start()
+            _bot_started = True
+            logger.info("Bot handler started successfully")
+            return
+        except Exception as e:
+            logger.error(f"Bot handler start failed: {e}")
+            wait = getattr(e, "value", None)
+            if isinstance(e, FloodWait) and isinstance(wait, (int, float)) and wait > 0:
+                delay = float(wait) + 5.0
+            _bot_client = None
+            if delay >= 600:
+                logger.warning(f"Bot handler rate-limited until +{delay:.0f}s — retrying in background later")
+                break
+            await asyncio.sleep(delay)
+            delay *= 2
+    # 大延迟限流：后台延时重试，不阻塞启动
+    if delay >= 600:
+        async def _later():
+            await asyncio.sleep(delay)
+            global _bot_started
+            _bot_started = False
+            await start_bot_handler(retries=1)
+        asyncio.create_task(_later())
 
 
 async def stop_bot_handler():

@@ -49,3 +49,32 @@ def test_looks_like_jav():
     assert _looks_like_jav("SSIS-806") is True
     assert _looks_like_jav("SSIS806") is True
     assert _looks_like_jav("庆余年 第二季") is False
+
+
+def test_parse_code_list():
+    from app.telegram.bot import _parse_code_list
+    text = (
+        "1\n"
+        "ABP-108\n"
+        "ABP-108\n"
+        "https://t.me/c/123/456\n"
+        "ADN165 部分文本\n"
+        "sonE-228 4K\n"
+        "乱码 20240101\n"
+        "ABF-017"
+    )
+    codes = _parse_code_list(text)
+    assert codes == ["ABP-108", "ADN-165", "SONE-228", "ABF-017"]
+
+
+def test_parse_code_list_cap():
+    from app.telegram.bot import _parse_code_list
+    text = " ".join(f"SSIS-{i}" for i in range(100, 600) if len(str(i)) >= 3)
+    codes = _parse_code_list(text, cap=10)
+    assert len(codes) == 10
+
+
+def test_safe_text_surrogates():
+    from app.telegram.jav_fetcher import safe_text
+    assert safe_text("abc SSIS-806") == "abc SSIS-806"
+    assert safe_text("") == ""
