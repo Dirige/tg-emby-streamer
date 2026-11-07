@@ -41,10 +41,22 @@ async def _resolve_channel_name(client, channel_id: str) -> str:
 
 # ========== Dashboard ==========
 
+def _dashboard_html() -> str:
+    html_path = Path(__file__).parent / "static" / "index.html"
+    return html_path.read_text(encoding="utf-8")
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
-    html_path = Path(__file__).parent / "static" / "index.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return HTMLResponse(_dashboard_html())
+
+
+# 兼容旧版入口路径 /web/index.html（同页），避免书签 404
+@router.get("/web", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/web/", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/web/index.html", response_class=HTMLResponse, include_in_schema=False)
+async def web_index():
+    return HTMLResponse(_dashboard_html())
 
 
 @router.get("/api/health")
