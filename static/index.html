@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TG Emby Streamer - 管理面板</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0b0d14;--bg2:#0f1117;--card:#161923;--card2:#1a1d2a;--border:#252836;--text:#e8eaed;--text2:#868aa0;--accent:#6366f1;--accent2:#818cf8;--accent3:#a5b4fc;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--blue:#3b82f6;--orange:#f97316;--pink:#ec4899;--radius:12px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;background-image:radial-gradient(ellipse at 20% 50%,rgba(99,102,241,.05) 0%,transparent 50%),radial-gradient(ellipse at 80% 20%,rgba(139,92,246,.03) 0%,transparent 50%)}
+a{color:var(--accent2);text-decoration:none;transition:color .2s}a:hover{color:var(--accent3)}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:var(--text2)}
+.topbar{background:rgba(22,25,35,.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.topbar h1{font-size:17px;font-weight:700;display:flex;align-items:center;gap:10px;letter-spacing:-.3px}
+.topbar .logo-icon{width:22px;height:22px;display:inline-block}
+.tabs{display:flex;gap:2px;background:rgba(22,25,35,.6);padding:8px 28px;border-bottom:1px solid var(--border);overflow-x:auto}
+.tab{padding:7px 14px;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:500;color:var(--text2);transition:all .2s;white-space:nowrap}
+.tab:hover{background:var(--border);color:var(--text)}
+.tab.active{background:linear-gradient(135deg,rgba(99,102,241,.2),rgba(139,92,246,.1));color:var(--accent2);box-shadow:inset 0 0 0 1px rgba(99,102,241,.15)}
+.main{max-width:1440px;margin:0 auto;padding:24px 28px}
+.page{display:none}.page.active{display:block;animation:fadeIn .25s ease}@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.grid{display:grid;gap:16px}.grid-2{grid-template-columns:repeat(2,1fr)}.grid-3{grid-template-columns:repeat(3,1fr)}.grid-4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:900px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:border-color .2s}.card:hover{border-color:rgba(99,102,241,.2)}
+.card h3{font-size:13px;color:var(--text2);margin-bottom:12px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.card .value{font-size:26px;font-weight:700;letter-spacing:-.5px}.card .sub{font-size:12px;color:var(--text2);margin-top:4px}
+.stat-card{text-align:center;padding:24px 16px}.stat-card .value{font-size:28px}
+.stat-card .sub{font-size:12px;color:var(--text2);margin-top:6px}
+.badge{display:inline-block;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;letter-spacing:.2px}
+.badge.green{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.15)}
+.badge.red{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.15)}
+.badge.yellow{background:rgba(234,179,8,.12);color:var(--yellow);border:1px solid rgba(234,179,8,.15)}
+.badge.blue{background:rgba(59,130,246,.12);color:var(--blue);border:1px solid rgba(59,130,246,.15)}
+.badge.gray{background:rgba(134,138,160,.1);color:var(--text2);border:1px solid rgba(134,138,160,.1)}
+.badge.orange{background:rgba(249,115,22,.12);color:var(--orange);border:1px solid rgba(249,115,22,.15)}
+.badge.pink{background:rgba(236,72,153,.12);color:var(--pink);border:1px solid rgba(236,72,153,.15)}
+.btn{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);cursor:pointer;font-size:12.5px;font-weight:500;transition:all .2s;display:inline-flex;align-items:center;gap:6px;line-height:1}
+.btn:hover{border-color:var(--accent);color:var(--accent2);background:rgba(99,102,241,.06)}
+.btn.primary{background:linear-gradient(135deg,var(--accent),#7c3aed);border-color:transparent;color:#fff}
+.btn.primary:hover{background:linear-gradient(135deg,var(--accent2),#8b5cf6);box-shadow:0 4px 16px rgba(99,102,241,.35);transform:translateY(-1px)}
+.btn.danger{background:linear-gradient(135deg,var(--red),#dc2626);border-color:transparent;color:#fff}
+.btn.danger:hover{box-shadow:0 4px 16px rgba(239,68,68,.35);transform:translateY(-1px)}
+.btn.success{background:linear-gradient(135deg,var(--green),#16a34a);border-color:transparent;color:#fff}
+.btn.success:hover{box-shadow:0 4px 16px rgba(34,197,94,.35);transform:translateY(-1px)}
+.btn.warning{background:linear-gradient(135deg,var(--yellow),#ca8a04);border-color:transparent;color:#000}
+.btn.warning:hover{box-shadow:0 4px 16px rgba(234,179,8,.35);transform:translateY(-1px)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none!important;box-shadow:none!important}
+.btn-group{display:flex;gap:8px;flex-wrap:wrap}
+.btn-sm{padding:5px 10px;font-size:11px;border-radius:6px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--border);font-size:12.5px}
+th{color:var(--text2);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.6px;padding-bottom:10px}
+tr:hover{background:rgba(99,102,241,.03)}
+tr:last-child td{border-bottom:none}
+.input{width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:13px;outline:none;transition:all .2s}
+.input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,102,241,.1)}
+select.input{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23868aa0' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:32px}
+textarea.input{min-height:60px;resize:vertical;font-family:inherit}
+label{font-size:11.5px;color:var(--text2);display:block;margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.form-group{margin-bottom:14px}
+.toast{position:fixed;top:20px;right:20px;padding:12px 22px;border-radius:10px;font-size:13px;font-weight:500;z-index:9999;animation:slideIn .3s ease;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.toast.success{background:linear-gradient(135deg,var(--green),#16a34a);color:#fff}
+.toast.error{background:linear-gradient(135deg,var(--red),#dc2626);color:#fff}
+.toast.info{background:linear-gradient(135deg,var(--blue),#2563eb);color:#fff}
+@keyframes slideIn{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
+.empty{text-align:center;padding:48px 24px;color:var(--text2)}.empty .icon{font-size:48px;margin-bottom:16px;opacity:.5}
+.flex{display:flex;align-items:center;gap:8px}.flex-between{display:flex;align-items:center;justify-content:space-between}
+.mt-16{margin-top:16px}.mb-16{margin-bottom:16px}.mb-8{margin-bottom:8px}
+.section-title{font-size:15px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px;letter-spacing:-.2px}
+.detail-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)}
+.detail-row:last-child{border-bottom:none}
+.detail-label{color:var(--text2);font-size:12.5px}.detail-value{font-size:12.5px;font-weight:600}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);z-index:200;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.modal-overlay.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;width:90%;max-width:660px;max-height:85vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.4);animation:modalIn .2s ease}
+@keyframes modalIn{from{opacity:0;transform:scale(.96) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.modal h2{font-size:17px;font-weight:700;margin-bottom:20px}
+.modal .btn-group{margin-top:24px;justify-content:flex-end}
+.hint{font-size:11px;color:var(--text2);margin-top:3px;line-height:1.4}
+code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size:12px;color:var(--accent2)}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1><img class="logo-icon" src="/logo.png" alt="" style="width:22px;height:22px"> TG Emby Streamer</h1>
+  <div class="flex" style="gap:16px">
+    <span id="dashTotalMedia" style="font-size:12px;color:var(--text2);background:var(--card2);padding:4px 12px;border-radius:6px;border:1px solid var(--border)"></span>
+    <span id="globalStatus" style="font-size:12px;color:var(--text2);background:var(--card2);padding:4px 12px;border-radius:6px;border:1px solid var(--border)">v3.0</span>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-page="dashboard">📊 仪表盘</div>
+  <div class="tab" data-page="telegram">📡 频道管理</div>
+  <div class="tab" data-page="media">🎬 媒体库</div>
+  <div class="tab" data-page="unrecognized">❓ 未识别</div>
+  <div class="tab" data-page="metadata">🏷️ 元数据</div>
+  <div class="tab" data-page="scan">🔍 扫描任务</div>
+  <div class="tab" data-page="cache">💾 缓存管理</div>
+  <div class="tab" data-page="settings">⚙️ 系统设置</div>
+</div>
+
+<div class="main">
+
+<!-- Dashboard -->
+<div class="page active" id="page-dashboard">
+  <div class="grid grid-4 mb-16" id="statCards"></div>
+  <div class="grid grid-2">
+    <div class="card"><h3>代理状态</h3><div id="dashProxy"></div></div>
+    <div class="card"><h3>系统信息</h3><div id="dashInfo"></div></div>
+  </div>
+  <div class="card mt-16"><h3>最近媒体</h3><div id="dashMedia"></div></div>
+</div>
+
+<!-- Telegram / Channels (merged with rules) -->
+<div class="page" id="page-telegram">
+  <div class="flex-between mb-16">
+    <div class="section-title">📡 频道管理</div>
+    <div class="btn-group">
+      <button class="btn primary" onclick="showAddChannelModal()">+ 添加频道</button>
+      <button class="btn" onclick="loadTelegram()">刷新</button>
+    </div>
+  </div>
+  <div class="card mb-16">
+    <div id="channelGroupedList">
+      <p style="font-size:13px;color:var(--text2)">加载中...</p>
+    </div>
+  </div>
+
+  <div class="flex-between mb-16 mt-16">
+    <div class="section-title">分类管理</div>
+    <button class="btn primary" onclick="showAddCategoryModal()">+ 添加分类</button>
+  </div>
+  <div class="card">
+    <div id="categoryList"></div>
+  </div>
+</div>
+
+<!-- Rule Editor Modal -->
+<div class="modal-overlay" id="ruleModal">
+  <div class="modal">
+    <h2 id="ruleModalTitle">编辑解析规则</h2>
+    <div class="form-group"><label>频道 ID</label><input class="input" id="ruleChannelId" placeholder="如: -1001234567890"></div>
+    <div class="form-group"><label>频道名称</label><input class="input" id="ruleChannelName" placeholder="如：影视剧/电视剧"></div>
+    <div class="form-group">
+      <label>分类</label>
+      <select class="input" id="ruleCategory">
+        <option value="电视剧">电视剧</option>
+        <option value="电影">电影</option>
+        <option value="动漫">动漫</option>
+        <option value="海外剧">海外剧</option>
+        <option value="18+">18+</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>标题提取规则</label>
+      <input class="input" id="ruleTitleRule" placeholder="如: line:0">
+      <div class="hint">line:N = caption 第 N 行 | regex:模式 = 正则提取 | 留空=从文件名取</div>
+    </div>
+    <div class="form-group">
+      <label>集数提取规则</label>
+      <input class="input" id="ruleEpisodeRule" placeholder="如: regex:第\s*(\d+)\s*集">
+      <div class="hint">regex:模式 = 用正则提取数字 | 留空=电影/无集数</div>
+    </div>
+    <div class="form-group">
+      <label>固定季数（默认）</label>
+      <input class="input" id="ruleSeason" type="number" placeholder="1" style="width:100px">
+      <div class="hint">留空=无固定季数；如未通过 season_rule 提取则用此值</div>
+    </div>
+    <div class="form-group">
+      <label>季数提取规则</label>
+      <input class="input" id="ruleSeasonRule" placeholder="如: regex:第\s*(\d+)\s*季">
+      <div class="hint">从 caption 提取季号，如「第二季」= 2。提取后自动从标题去掉季信息。</div>
+    </div>
+    <div class="form-group">
+      <label>年份提取规则</label>
+      <input class="input" id="ruleYearRule" placeholder="如: regex:\((\d{4})\)">
+      <div class="hint">用于电影，留空则无年份</div>
+    </div>
+    <div class="form-group">
+      <label>文件名提取规则</label>
+      <input class="input" id="ruleFilenameRule" placeholder="如: regex:([A-Z]+-\d+)">
+      <div class="hint">当 caption 为空时，从此正则从文件名提取标题。如：regex:([A-Z]+-\d+) 提取 HSODA-120</div>
+    </div>
+    <div class="form-group">
+      <label>文件名模板</label>
+      <input class="input" id="ruleFilenameTemplate" placeholder="留空自动生成">
+      <div class="hint">留空由系统自动生成 STRM 文件名</div>
+    </div>
+    <div class="form-group">
+      <label class="flex" style="gap:8px;cursor:pointer">
+        <input type="checkbox" id="ruleEnabled" checked>
+        <span>启用此规则</span>
+      </label>
+    </div>
+    <div class="btn-group">
+      <button class="btn" onclick="closeModal('ruleModal')">取消</button>
+      <button class="btn primary" onclick="saveRule()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Media -->
+<div class="page" id="page-media">
+  <div class="flex-between mb-16">
+    <div class="section-title">媒体库</div>
+    <div class="btn-group">
+      <select class="input" id="mediaFilter" style="width:100px" onchange="mediaPage=1;loadMedia()"><option value="">全部</option></select>
+      <select class="input" id="mediaPageSize" style="width:80px" onchange="mediaPage=1;loadMedia()"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select>
+      <button class="btn primary" onclick="loadMedia()">刷新</button>
+      <button class="btn warning" onclick="regenStrm()">重新生成STRM</button>
+      <button class="btn danger" onclick="deleteBatchMedia()">批量删除</button>
+    </div>
+  </div>
+  <div class="card"><div id="mediaTable"></div></div>
+  <div id="mediaPagination" class="mt-16" style="text-align:center"></div>
+</div>
+
+<!-- Category Editor Modal -->
+<div class="modal-overlay" id="categoryModal">
+  <div class="modal" style="max-width:480px">
+    <h2 id="categoryModalTitle">添加分类</h2>
+    <input type="hidden" id="categoryEditId">
+    <div class="form-group"><label>分类名称</label><input class="input" id="categoryName" placeholder="如: 综艺"></div>
+    <div class="form-group"><label>STRM 子目录</label><input class="input" id="categoryStrmDir" placeholder="留空与名称相同">
+      <div class="hint">所有此分类的频道视频将输出到 strm/{子目录}/ 下</div>
+    </div>
+    <div class="form-group"><label>排序</label><input class="input" id="categorySortOrder" type="number" value="0" style="width:100px"></div>
+    <div class="btn-group"><button class="btn" onclick="closeModal('categoryModal')">取消</button><button class="btn primary" onclick="saveCategory()">保存</button></div>
+  </div>
+</div>
+
+<!-- Media Edit Modal -->
+<div class="modal-overlay" id="mediaEditModal">
+  <div class="modal">
+    <h2>编辑媒体信息</h2>
+    <div class="form-group"><label>标题</label><input class="input" id="mediaEditTitle"></div>
+    <div class="form-group">
+      <label>分类</label>
+      <select class="input" id="mediaEditCategory"></select>
+    </div>
+    <div class="form-group"><label>原消息链接</label><input class="input" id="mediaEditLink" disabled style="color:var(--accent2)"></div>
+    <input type="hidden" id="mediaEditId">
+    <div class="btn-group"><button class="btn" onclick="closeModal('mediaEditModal')">取消</button><button class="btn primary" onclick="saveMediaEdit()">保存</button></div>
+  </div>
+</div>
+
+<!-- Unrecognized -->
+<div class="page" id="page-unrecognized">
+  <div class="flex-between mb-16">
+    <div class="section-title">未识别媒体</div>
+    <div class="btn-group">
+      <select class="input" id="unrecPageSize" style="width:80px" onchange="unrecPage=1;loadUnrecognized()"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select>
+      <button class="btn warning" onclick="retryAllUnrecognized()">全部重试</button>
+      <button class="btn primary" onclick="loadUnrecognized()">刷新</button>
+      <button class="btn danger" onclick="clearAllUnrecognized()">清除全部</button>
+    </div>
+  </div>
+  <div class="card"><div id="unrecognizedTable"></div></div>
+  <div id="unrecPagination" class="mt-16" style="text-align:center"></div>
+</div>
+
+<!-- Metadata (TMDB/Emby) -->
+<div class="page" id="page-metadata">
+  <div class="flex-between mb-16">
+    <div class="section-title">🏷️ TMDB 元数据设置</div>
+    <button class="btn warning" onclick="tmdbTest()">测试连接</button>
+    <button class="btn primary" onclick="saveTmdbSettings()">保存设置</button>
+  </div>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>TMDB API</h3>
+      <div class="form-group"><label>API Key</label><input class="input" id="s_tmdb_key" placeholder="08b9ec307e11460091ce04008ae36ba6"></div>
+      <div class="form-group"><label>API 地址（反代）</label><input class="input" id="s_tmdb_api" placeholder="https://tmdb.255432.xyz/api/3"></div>
+      <div class="form-group"><label>图片地址（反代）</label><input class="input" id="s_tmdb_img" placeholder="https://tmdb.255432.xyz/t/p"></div>
+      <div class="hint">使用反代地址可避免 TMDB 被墙</div>
+    </div>
+    <div class="card">
+      <h3>Emby / Jellyfin 自动刷新</h3>
+      <div class="form-group"><label>Emby 服务器地址</label><input class="input" id="s_emby_url" placeholder="http://192.168.1.100:8096"></div>
+      <div class="form-group"><label>API Key</label><input class="input" id="s_emby_key" placeholder="在 Emby → 高级 → API 密钥中生成"></div>
+      <div class="hint">填写后，每次入库完成会自动通知 Emby 刷新媒体库</div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn btn-sm" onclick="testEmby()">测试连接</button>
+        <button class="btn btn-sm primary" onclick="triggerEmbyRefresh()">立即刷新</button>
+      </div>
+    </div>
+  </div>
+  <div class="card mt-16">
+    <h3>自动元数据识别</h3>
+    <div class="form-group">
+      <label class="flex" style="gap:8px;cursor:pointer">
+        <input type="checkbox" id="s_enrich_enabled" checked>
+        <span>入库时自动从 TMDB 获取元数据（海报、简介、分类信息）</span>
+      </label>
+    </div>
+  </div>
+  <div class="card mt-16" id="tmdbTestResult" style="display:none"></div>
+</div>
+
+<!-- Scan -->
+<div class="page" id="page-scan">
+  <div class="section-title mb-16">扫描任务</div>
+
+  <!-- Normal Scan -->
+  <div class="card mb-16">
+    <h3>单频道扫描</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:12px">从选中频道的最近消息中扫描视频，按规则提取入库并生成 STRM。</p>
+    <div class="grid grid-2">
+      <div class="form-group">
+        <label>频道</label>
+        <select class="input" id="scanChannelSelect">
+          <option value="">-- 请先加载频道列表 --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>扫描条数限制</label>
+        <input class="input" id="scanLimit" type="number" value="200">
+      </div>
+    </div>
+    <button class="btn primary" onclick="startScan()" id="btnScan">开始扫描</button>
+    <div id="scanStatus" class="mt-16" style="display:none;padding:12px;border-radius:6px;background:var(--bg);border:1px solid var(--border);font-size:13px"></div>
+  </div>
+
+  <!-- CLI Scan -->
+  <div class="card mb-16" style="border-color:var(--accent);border-width:2px">
+    <h3 style="font-size:16px;display:flex;align-items:center;gap:8px">📟 命令行扫描（推荐长时间/全量任务）</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:12px">
+      进入容器执行，实时查看每条入库记录，支持 Ctrl+C 随时停止，不会因浏览器关闭而中断。
+    </p>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;font-size:13px;line-height:2">
+      <div><span style="color:var(--text2)"># 全量扫描所有频道（limit=0 表示全部消息）</span></div>
+      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 0</code></div>
+      <div style="margin-top:8px"><span style="color:var(--text2)"># 扫描单个频道</span></div>
+      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py -c 频道ID --limit 0</code></div>
+      <div style="margin-top:8px"><span style="color:var(--text2)"># 快捷：每频道扫 200 条（测试用，limit=0=全部消息）</span></div>
+      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 200</code></div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="navigator.clipboard?.writeText('docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 0');toast('已复制','success')">📋 全量扫描 (limit=0)</button>
+      <button class="btn" onclick="navigator.clipboard?.writeText('docker exec -it tg-emby-streamer python scripts/scan.py -c 频道ID --limit 0');toast('已复制','success')">📋 单频道扫描</button>
+    </div>
+  </div>
+
+  <!-- Full Import -->
+  <div class="card mb-16" style="border-color:var(--red);border-width:2px">
+    <h3 style="color:var(--red);font-weight:700;font-size:16px">⚠️ 网页版全量入库</h3>
+    <p style="font-size:13px;color:var(--text2);padding:8px 0;margin-bottom:8px">
+      遍历所有已启用规则的频道，逐条扫描。适合少量频道，<span style="color:var(--yellow)">长时间任务推荐上方命令行方式</span>。
+    </p>
+    <button class="btn danger" onclick="fullImport()" id="btnFullImport" style="font-size:14px;padding:12px 24px">🚀 开始全量入库</button>
+    <div id="fullImportStatus" class="mt-16" style="display:none;padding:14px;border-radius:8px;background:var(--bg);border:1px solid var(--red);font-size:14px;font-weight:600"></div>
+  </div>
+
+</div>
+
+<!-- Cache -->
+<div class="page" id="page-cache">
+  <div class="flex-between mb-16">
+    <div class="section-title">缓存管理</div>
+    <button class="btn danger" onclick="clearCache()">清空缓存</button>
+  </div>
+  <div class="grid grid-3 mb-16">
+    <div class="card stat-card"><div class="value" id="cacheCount">-</div><div class="sub">缓存文件数</div></div>
+    <div class="card stat-card"><div class="value" id="cacheSize">-</div><div class="sub">缓存大小</div></div>
+    <div class="card stat-card"><div class="value" id="cacheMedia">-</div><div class="sub">已缓存媒体</div></div>
+  </div>
+  <div class="card"><h3>缓存详情</h3><div id="cacheDetail"></div></div>
+</div>
+
+<!-- Settings -->
+<div class="page" id="page-settings">
+  <div class="flex-between mb-16">
+    <div class="section-title">系统设置</div>
+    <button class="btn primary" onclick="saveAllSettings()">保存设置</button>
+  </div>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Telegram</h3>
+      <div class="card" style="background:var(--card2);border:1px solid var(--border);padding:16px;margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <strong>登录状态</strong>
+          <span id="authStatusBadge" class="badge gray">检查中...</span>
+        </div>
+        <div id="authUserInfo" style="font-size:13px;color:var(--text2);margin-bottom:12px;display:none"></div>
+        <div id="authLoginForm">
+          <div class="form-group"><label>手机号</label><input class="input" id="s_tg_phone" placeholder="+8612345678901"></div>
+          <div id="authCodeRow" style="display:none">
+            <div class="form-group"><label>验证码</label><input class="input" id="s_tg_code" placeholder="请输入验证码"></div>
+            <div id="authPasswordRow" style="display:none">
+              <div class="form-group"><label>两步验证密码</label><input class="input" id="s_tg_password" type="password" placeholder="请输入密码"></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button class="btn primary" id="authSendCodeBtn" onclick="authSendCode()" style="flex:1">发送验证码</button>
+            <button class="btn primary" id="authVerifyBtn" onclick="authVerifyCode()" style="flex:1;display:none">验证</button>
+            <button class="btn primary" id="authPasswordBtn" onclick="authCheckPassword()" style="flex:1;display:none">提交密码</button>
+            <button class="btn" id="authLogoutBtn" onclick="authLogout()" style="flex:1;display:none;background:var(--red)">退出登录</button>
+          </div>
+          <div id="authMessage" style="margin-top:8px;font-size:13px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>代理 (SOCKS5)</h3>
+      <div class="form-group">
+        <label>启用代理</label>
+        <select class="input" id="s_px_enabled"><option value="true">启用</option><option value="false">禁用</option></select>
+      </div>
+      <div class="form-group"><label>代理协议</label><select class="input" id="s_px_scheme"><option value="socks5">SOCKS5</option><option value="http">HTTP</option></select></div>
+      <div class="form-group"><label>地址</label><input class="input" id="s_px_host"></div>
+      <div class="form-group"><label>端口</label><input class="input" id="s_px_port" type="number"></div>
+    </div>
+    <div class="card">
+      <h3>流媒体服务器</h3>
+      <div class="form-group"><label>监听地址</label><input class="input" id="s_st_host"></div>
+      <div class="form-group"><label>监听端口</label><input class="input" id="s_st_port" type="number"></div>
+      <div class="form-group"><label>外部 URL</label><input class="input" id="s_st_base"></div>
+      <div class="form-group"><label>本地 URL</label><input class="input" id="s_st_local"></div>
+      <div class="form-group"><label>访问 Token</label><input class="input" id="s_st_token" placeholder="留空不启用"></div>
+    </div>
+    <div class="card">
+      <h3>通知与自动监控</h3>
+      <div class="form-group">
+        <label>启用通知</label>
+        <select class="input" id="s_nt_enabled"><option value="true">启用</option><option value="false">禁用</option></select>
+        <div class="hint">自动/手动扫描频道的每次入库都会发送通知</div>
+      </div>
+      <div class="form-group">
+        <label>通知目标</label>
+        <input class="input" id="s_nt_target" placeholder="8310632282">
+        <div class="hint">填写接收通知的 Telegram 用户 ID（数字）</div>
+      </div>
+      <div class="form-group">
+        <label>Bot Token</label>
+        <input class="input" id="s_nt_bot_token" type="password" placeholder="从 @BotFather 获取">
+        <div class="hint">留空则用登录账号发通知，填写后优先使用 Bot 发送</div>
+      </div>
+      <div class="form-group">
+        <label>自动监控间隔（分钟）</label>
+        <input class="input" id="s_mt_interval" type="number" placeholder="10">
+        <div class="hint">每隔多少分钟自动扫描一次频道，默认 10 分钟，填 0 关闭自动监控</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+const API = '';
+let mediaData = [];
+let mediaPage = 1, mediaTotal = 0;
+let unrecPage = 1, unrecTotal = 0;
+
+function switchTab(page) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const tab = document.querySelector(`.tab[data-page="${page}"]`);
+  if (tab) {
+    tab.classList.add('active');
+    const el = document.getElementById('page-' + page);
+    if (el) { el.classList.add('active'); loadPage(page); }
+  }
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    history.replaceState(null, '', '#' + tab.dataset.page);
+    switchTab(tab.dataset.page);
+  });
+});
+
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+async function api(path, opts = {}) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    const r = await fetch(API + path, {credentials: 'same-origin', signal: ctrl.signal, ...opts});
+    clearTimeout(timer);
+    if(r.status===401){location.reload();return null;}
+    return await r.json();
+  } catch (e) {
+    if (e.name === 'AbortError') { console.warn('API timeout:', path); return null; }
+    console.error('API error:', path, e);
+    return null;
+  }
+}
+async function apiPost(path, body = {}) {
+  return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+async function apiDelete(path) {
+  return api(path, { method: 'DELETE' });
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function formatSize(b) { if (!b) return '-'; const u = ['B','KB','MB','GB','TB']; let i = 0, s = b; while (s >= 1024 && i < 4) { s /= 1024; i++; } return s.toFixed(i > 0 ? 1 : 0) + ' ' + u[i]; }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+
+// ========== Dashboard ==========
+async function loadDashboard() {
+  const health = await api('/api/health');
+  const media = await api('/api/media?page_size=5');
+  const totalEl = document.getElementById('dashTotalMedia');
+  if (totalEl && media?.total !== undefined) totalEl.textContent = `📁 ${media.total} 个媒体`;
+  document.getElementById('statCards').innerHTML = `
+    <div class="card stat-card"><div class="value">${health?.proxy?.enabled ? '<span style="color:var(--green)">已启用</span>' : '<span style="color:var(--yellow)">未启用</span>'}</div><div class="sub">代理状态</div></div>
+    <div class="card stat-card"><div class="value">${health?.proxy?.scheme || '-'}</div><div class="sub">代理类型</div></div>
+    <div class="card stat-card"><div class="value">${media?.total || 0}</div><div class="sub">媒体文件</div></div>
+    <div class="card stat-card"><div class="value">${health?.proxy?.hostname ? health.proxy.hostname+':'+health.proxy.port : '-'}</div><div class="sub">代理地址</div></div>
+  `;
+  document.getElementById('dashProxy').innerHTML = health?.proxy?.enabled
+    ? `<div class="detail-row"><span class="detail-label">状态</span><span class="detail-value"><span class="badge green">已启用</span></span></div>
+       <div class="detail-row"><span class="detail-label">协议</span><span class="detail-value">${health.proxy.scheme || '-'}</span></div>
+       <div class="detail-row"><span class="detail-label">地址</span><span class="detail-value">${health.proxy.hostname || '-'}:${health.proxy.port || '-'}</span></div>`
+    : '<div class="empty">代理未启用</div>';
+  document.getElementById('dashInfo').innerHTML = '<div class="detail-row"><span class="detail-label">版本</span><span class="detail-value">v3.0</span></div>';
+  if (media?.items?.length) {
+    document.getElementById('dashMedia').innerHTML = '<table><tr><th>标题</th><th>分类</th><th>MSG ID</th><th>来源</th></tr>' +
+      media.items.map(m => `<tr><td>${esc(m.title||m.file_name||'-')}</td><td><span class="badge ${catColors[m.category]||'gray'}">${m.category||'-'}</span></td><td>${m.message_id}</td><td><span class="badge gray">${esc(m.channel_name||m.chat_id||'')}</span></td></tr>`).join('') + '</table>';
+  } else { document.getElementById('dashMedia').innerHTML = '<div class="empty">暂无媒体记录</div>'; }
+}
+
+// ========== Channel List (merged with rules) ==========
+let allChannelRules = [];
+const catColors = {电视剧:'blue',电影:'green',动漫:'orange',海外剧:'yellow','18+':'pink'};
+
+async function loadTelegram() {
+  const [rulesR, catsR] = await Promise.all([
+    api('/api/channel-rules'),
+    api('/api/categories'),
+  ]);
+  allChannelRules = rulesR?.rules || [];
+  renderGroupedChannels(allChannelRules);
+  renderCategories(catsR?.categories || []);
+  populateRuleCategory(catsR?.categories || []);
+  populateScanDropdown(allChannelRules);
+}
+
+function populateRuleCategory(categories) {
+  const sel = document.getElementById('ruleCategory');
+  if (!sel || !categories) return;
+  sel.innerHTML = categories.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+}
+
+function renderGroupedChannels(rules) {
+  const el = document.getElementById('channelGroupedList');
+  // Group by category
+  const groups = {};
+  const uncategorized = [];
+  for (const r of rules) {
+    const cat = r.category || '__uncategorized__';
+    if (cat === '__uncategorized__') uncategorized.push(r);
+    else {
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(r);
+    }
+  }
+  const sortedCats = Object.keys(groups).sort();
+  let html = '';
+  for (const cat of sortedCats) {
+    const items = groups[cat];
+    html += `<div class="mb-16">
+      <div class="flex-between mb-8">
+        <h3 style="margin:0;font-size:14px;"><span class="badge ${catColors[cat]||'blue'}" style="font-size:12px">${esc(cat)}</span> <span style="color:var(--text2);font-size:12px">${items.length} 个频道</span></h3>
+      </div>
+      <table style="width:100%"><tr><th>频道名称</th><th>ID</th><th>标题规则</th><th>集数规则</th><th>状态</th><th>操作</th></tr>
+      ${items.map(r => {
+        const safeId = esc(r.channel_id);
+        const name = r.channel_name || r.channel_id;
+        return `<tr>
+          <td>${esc(name)}</td><td><code>${safeId}</code></td>
+          <td><code style="font-size:11px">${esc(r.title_rule||'-')}</code></td>
+          <td><code style="font-size:11px">${esc(r.episode_rule||'-')}</code></td>
+          <td>${r.enabled ? '<span class="badge green">启用</span>' : '<span class="badge gray">禁用</span>'}</td>
+          <td>
+            <button class="btn btn-sm primary" onclick="openRuleEditor('${safeId}')">编辑</button>
+            <button class="btn btn-sm success" onclick="scanSingleChannel('${safeId}')">扫描</button>
+            <button class="btn btn-sm danger" onclick="deleteRule('${safeId}')">删除</button>
+          </td></tr>`;
+      }).join('')}
+      </table>
+    </div>`;
+  }
+  if (uncategorized.length) {
+    html += `<div class="mb-16">
+      <h3 style="margin:0 0 8px;font-size:14px;color:var(--text2)">未分类</h3>
+      <table style="width:100%"><tr><th>ID</th><th>操作</th></tr>
+      ${uncategorized.map(r => `<tr><td><code>${esc(r.channel_id)}</code></td>
+        <td><button class="btn btn-sm primary" onclick="openRuleEditor('${esc(r.channel_id)}')">编辑</button></td></tr>`).join('')}
+      </table>
+    </div>`;
+  }
+  if (!rules.length) {
+    html = '<div class="empty">暂无频道，点击「+ 添加频道」开始配置</div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderCategories(categories) {
+  const el = document.getElementById('categoryList');
+  if (!categories.length) {
+    el.innerHTML = '<div class="empty"><p style="font-size:13px">暂无自定义分类。可添加「综艺」「纪录片」等分类，视频将输出到对应的 STRM 子目录。</p></div>';
+    return;
+  }
+  el.innerHTML = `<table><tr><th>分类名称</th><th>STRM 子目录</th><th>排序</th><th>操作</th></tr>
+    ${categories.map(c => `<tr>
+      <td><span class="badge blue">${esc(c.name)}</span></td>
+      <td><code>${esc(c.strm_dir)}</code></td>
+      <td>${c.sort_order}</td>
+      <td>
+        <button class="btn btn-sm" onclick="editCategory(${c.id})">编辑</button>
+        <button class="btn btn-sm danger" onclick="deleteCategory(${c.id})">删除</button>
+      </td>
+    </tr>`).join('')}</table>`;
+}
+
+function showAddChannelModal() {
+  document.getElementById('ruleModalTitle').textContent = '添加频道';
+  document.getElementById('ruleChannelId').value = '';
+  document.getElementById('ruleChannelName').value = '';
+  document.getElementById('ruleCategory').value = '电视剧';
+  document.getElementById('ruleTitleRule').value = '';
+  document.getElementById('ruleEpisodeRule').value = '';
+  document.getElementById('ruleSeason').value = '';
+  document.getElementById('ruleSeasonRule').value = '';
+  document.getElementById('ruleYearRule').value = '';
+  document.getElementById('ruleFilenameRule').value = '';
+  document.getElementById('ruleFilenameTemplate').value = '';
+  document.getElementById('ruleEnabled').checked = true;
+  openModal('ruleModal');
+}
+
+async function openRuleEditor(channelId) {
+  document.getElementById('ruleModalTitle').textContent = '编辑解析规则';
+  document.getElementById('ruleChannelId').value = channelId;
+  document.getElementById('ruleChannelName').value = '';
+  document.getElementById('ruleCategory').value = '电视剧';
+  document.getElementById('ruleTitleRule').value = '';
+  document.getElementById('ruleEpisodeRule').value = '';
+  document.getElementById('ruleSeason').value = '';
+  document.getElementById('ruleSeasonRule').value = '';
+  document.getElementById('ruleYearRule').value = '';
+  document.getElementById('ruleFilenameRule').value = '';
+  document.getElementById('ruleFilenameTemplate').value = '';
+  document.getElementById('ruleEnabled').checked = true;
+  const r = await api('/api/channel-rule?channel_id=' + encodeURIComponent(channelId));
+  if (r?.rule) {
+    const rl = r.rule;
+    document.getElementById('ruleChannelName').value = rl.channel_name || '';
+    document.getElementById('ruleCategory').value = rl.category || '电视剧';
+    document.getElementById('ruleTitleRule').value = rl.title_rule || '';
+    document.getElementById('ruleEpisodeRule').value = rl.episode_rule || '';
+    document.getElementById('ruleSeason').value = rl.season != null ? rl.season : '';
+    document.getElementById('ruleSeasonRule').value = rl.season_rule || '';
+    document.getElementById('ruleYearRule').value = rl.year_rule || '';
+    document.getElementById('ruleFilenameRule').value = rl.filename_rule || '';
+    document.getElementById('ruleFilenameTemplate').value = rl.filename_template || '';
+    document.getElementById('ruleEnabled').checked = rl.enabled !== false;
+  }
+  openModal('ruleModal');
+}
+
+async function saveRule() {
+  const body = {
+    channel_id: document.getElementById('ruleChannelId').value,
+    channel_name: document.getElementById('ruleChannelName').value,
+    category: document.getElementById('ruleCategory').value,
+    title_rule: document.getElementById('ruleTitleRule').value,
+    episode_rule: document.getElementById('ruleEpisodeRule').value,
+    season: document.getElementById('ruleSeason').value || null,
+    season_rule: document.getElementById('ruleSeasonRule').value,
+    year_rule: document.getElementById('ruleYearRule').value,
+    filename_rule: document.getElementById('ruleFilenameRule').value,
+    filename_template: document.getElementById('ruleFilenameTemplate').value,
+    enabled: document.getElementById('ruleEnabled').checked,
+  };
+  const r = await apiPost('/api/channel-rule/save', body);
+  if (r?.success) { toast('规则已保存', 'success'); closeModal('ruleModal'); loadTelegram(); }
+  else toast(r?.message || '保存失败', 'error');
+}
+
+async function deleteRule(channelId) {
+  if (!confirm(`确定删除频道 ${channelId} 的规则？`)) return;
+  const r = await apiPost('/api/channel-rule/delete', { channel_id: channelId });
+  if (r?.success) { toast('规则已删除', 'success'); loadTelegram(); }
+  else toast(r?.message || '删除失败', 'error');
+}
+
+// ========== Category CRUD ==========
+function showAddCategoryModal() {
+  document.getElementById('categoryModalTitle').textContent = '添加分类';
+  document.getElementById('categoryEditId').value = '';
+  document.getElementById('categoryName').value = '';
+  document.getElementById('categoryStrmDir').value = '';
+  document.getElementById('categorySortOrder').value = '0';
+  openModal('categoryModal');
+}
+
+async function editCategory(id) {
+  const r = await api('/api/categories');
+  const cat = r?.categories?.find(c => c.id === id);
+  if (!cat) { toast('分类不存在', 'error'); return; }
+  document.getElementById('categoryModalTitle').textContent = '编辑分类';
+  document.getElementById('categoryEditId').value = cat.id;
+  document.getElementById('categoryName').value = cat.name || '';
+  document.getElementById('categoryStrmDir').value = cat.strm_dir || '';
+  document.getElementById('categorySortOrder').value = cat.sort_order || 0;
+  openModal('categoryModal');
+}
+
+async function saveCategory() {
+  const body = {
+    id: document.getElementById('categoryEditId').value || null,
+    name: document.getElementById('categoryName').value.trim(),
+    strm_dir: document.getElementById('categoryStrmDir').value.trim(),
+    sort_order: parseInt(document.getElementById('categorySortOrder').value) || 0,
+  };
+  if (!body.name) { toast('请输入分类名称', 'error'); return; }
+  const r = await apiPost('/api/category/save', body);
+  if (r?.success) { toast('分类已保存', 'success'); closeModal('categoryModal'); loadTelegram(); }
+  else toast(r?.message || '保存失败', 'error');
+}
+
+async function deleteCategory(id) {
+  if (!confirm('确定删除此分类？（不会删除频道）')) return;
+  const r = await apiDelete('/api/category/' + id);
+  if (r?.success) { toast('分类已删除', 'success'); loadTelegram(); }
+  else toast(r?.message || '删除失败', 'error');
+}
+
+// ========== Media ==========
+async function populateCategoryFilters() {
+  const r = await api('/api/categories');
+  const cats = r?.categories || [];
+  const hardcoded = ['电视剧', '电影', '动漫', '海外剧', '18+'];
+  const allCats = [...new Set([...hardcoded, ...cats.map(c => c.name)])];
+  // Media filter
+  const filter = document.getElementById('mediaFilter');
+  if (filter) {
+    const current = filter.value;
+    filter.innerHTML = '<option value="">全部</option>' + allCats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    if (current) filter.value = current;
+  }
+  // Media edit category
+  const editCat = document.getElementById('mediaEditCategory');
+  if (editCat) {
+    editCat.innerHTML = allCats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  }
+  return cats;
+}
+
+async function loadMedia() {
+  const pageSize = document.getElementById('mediaPageSize')?.value || 20;
+  const category = document.getElementById('mediaFilter')?.value || '';
+  const r = await api(`/api/media?page=${mediaPage}&page_size=${pageSize}&category=${category}`);
+  if (!r) return;
+  mediaData = r.items || [];
+  mediaTotal = r.total || 0;
+  renderMedia(mediaData);
+  renderPagination('mediaPagination', mediaPage, mediaTotal, parseInt(pageSize), (p) => { mediaPage = p; loadMedia(); });
+}
+
+function renderMedia(items) {
+  if (!items.length) { document.getElementById('mediaTable').innerHTML = '<div class="empty">暂无媒体记录</div>'; return; }
+  document.getElementById('mediaTable').innerHTML = `<table><tr><th><input type="checkbox" id="mediaSelectAll" onchange="toggleSelectAllMedia(this)"></th><th>标题</th><th>分类</th><th>频道</th><th>原消息</th><th>STRM</th><th>操作</th></tr>
+    ${items.map(m => {
+      const title = m.title || m.file_name || '-';
+      const titleShort = title.length > 40 ? title.substring(0, 40)+'...' : title;
+      return `<tr><td><input type="checkbox" class="media-cb" value="${m.id}" onchange="updateBatchBtn()"></td>
+        <td title="${esc(title)}">${esc(titleShort)}</td>
+        <td><span class="badge ${catColors[m.category]||'gray'}">${m.category||'-'}</span></td>
+        <td><span class="badge gray">${esc(m.channel_name||m.chat_id||'')}</span></td>
+        <td>${m.source_link ? `<a href="${esc(m.source_link)}" target="_blank" style="font-size:11px">🔗 查看</a>` : '-'}</td>
+        <td>${m.strm_path ? '<span class="badge green">有</span>' : '<span class="badge gray">无</span>'}</td>
+        <td>
+          <a href="/stream/${m.message_id}" target="_blank" class="btn btn-sm">播放</a>
+          <button class="btn btn-sm" onclick="openMediaEdit(${m.id})">编辑</button>
+          <button class="btn btn-sm danger" onclick="deleteSingleMedia(${m.id})">删除</button>
+        </td></tr>`;
+    }).join('')}
+    </table><div class="sub mt-16">共 ${mediaTotal} 条</div>`;
+}
+
+function renderPagination(containerId, currentPage, total, pageSize, onPageChange) {
+  const totalPages = Math.ceil(total / pageSize);
+  if (totalPages <= 1) { document.getElementById(containerId).innerHTML = ''; return; }
+  let html = '<div style="display:inline-flex;gap:4px;align-items:center">';
+  html += `<button class="btn btn-sm" ${currentPage<=1?'disabled':''} data-action="prev">上一页</button>`;
+  const start = Math.max(1, currentPage - 2);
+  const end = Math.min(totalPages, currentPage + 2);
+  if (start > 1) html += `<button class="btn btn-sm" data-page="1">1</button>`;
+  if (start > 2) html += '<span style="color:var(--text2)">...</span>';
+  for (let i = start; i <= end; i++) {
+    html += `<button class="btn btn-sm ${i===currentPage?'primary':''}" data-page="${i}">${i}</button>`;
+  }
+  if (end < totalPages - 1) html += '<span style="color:var(--text2)">...</span>';
+  if (end < totalPages) html += `<button class="btn btn-sm" data-page="${totalPages}">${totalPages}</button>`;
+  html += `<button class="btn btn-sm" ${currentPage>=totalPages?'disabled':''} data-action="next">下一页</button>`;
+  html += `<span style="color:var(--text2);margin-left:8px">${total} 条 / ${totalPages} 页</span>`;
+  html += '</div>';
+  const el = document.getElementById(containerId);
+  el.innerHTML = html;
+  el.querySelectorAll('button[data-page]').forEach(btn => btn.addEventListener('click', () => onPageChange(parseInt(btn.dataset.page))));
+  el.querySelector('[data-action="prev"]')?.addEventListener('click', () => onPageChange(currentPage - 1));
+  el.querySelector('[data-action="next"]')?.addEventListener('click', () => onPageChange(currentPage + 1));
+}
+
+function toggleSelectAllMedia(el) {
+  document.querySelectorAll('.media-cb').forEach(cb => cb.checked = el.checked);
+}
+
+function getSelectedMediaIds() {
+  return [...document.querySelectorAll('.media-cb:checked')].map(cb => parseInt(cb.value));
+}
+
+// ========== Media Edit ==========
+async function openMediaEdit(id) {
+  const r = await api('/api/media/' + id);
+  if (!r?.item) { toast('获取媒体信息失败', 'error'); return; }
+  const item = r.item;
+  document.getElementById('mediaEditId').value = item.id;
+  document.getElementById('mediaEditTitle').value = item.title || item.file_name || '';
+  document.getElementById('mediaEditCategory').value = item.category || '电视剧';
+  document.getElementById('mediaEditLink').value = item.source_link || '';
+  openModal('mediaEditModal');
+}
+
+async function saveMediaEdit() {
+  const id = parseInt(document.getElementById('mediaEditId').value);
+  const title = document.getElementById('mediaEditTitle').value.trim();
+  const category = document.getElementById('mediaEditCategory').value;
+  if (!id) return;
+  const body = { id };
+  if (title) body.title = title;
+  if (category) body.category = category;
+  const r = await apiPost('/api/media/update', body);
+  if (r?.success) { toast('已更新', 'success'); closeModal('mediaEditModal'); loadMedia(); }
+  else toast(r?.message || '保存失败', 'error');
+}
+
+async function deleteSingleMedia(id) {
+  if (!confirm('确定删除此记录？对应的 STRM 文件也会被删除。')) return;
+  const r = await apiDelete('/api/media/' + id);
+  if (r?.success) { toast('已删除', 'success'); loadMedia(); }
+  else toast(r?.message || '删除失败', 'error');
+}
+
+async function deleteBatchMedia() {
+  const ids = getSelectedMediaIds();
+  if (!ids.length) { toast('请先勾选要删除的记录', 'error'); return; }
+  if (!confirm(`确定删除选中的 ${ids.length} 条记录？`)) return;
+  const r = await apiPost('/api/media/delete-batch', { ids });
+  if (r?.success) { toast(r.message, 'success'); loadMedia(); }
+  else toast(r?.message || '删除失败', 'error');
+}
+
+async function regenStrm() {
+  if (!confirm('确定重新生成所有 STRM 文件？')) return;
+  toast('重新生成中...', 'info');
+  const r = await apiPost('/api/media/regen-strm');
+  if (r?.success) { toast(r.message, 'success'); loadMedia(); }
+  else toast(r?.message || '操作失败', 'error');
+}
+
+// ========== Unrecognized ==========
+async function loadUnrecognized() {
+  const pageSize = document.getElementById('unrecPageSize')?.value || 20;
+  const r = await api(`/api/media/unrecognized?page=${unrecPage}&page_size=${pageSize}`);
+  if (!r) return;
+  unrecTotal = r.total || 0;
+  const el = document.getElementById('unrecognizedTable');
+  if (!r.items?.length) { el.innerHTML = '<div class="empty">🎉 所有媒体都已成功识别</div>'; document.getElementById('unrecPagination').innerHTML = ''; return; }
+  el.innerHTML = `<table><tr><th>MSG ID</th><th>解析标题</th><th>分类</th><th>失败原因</th><th>原消息</th><th>操作</th></tr>
+    ${r.items.map(m => `<tr>
+      <td>${m.message_id}</td>
+      <td title="${esc(m.parsed_title||'')}">${esc(m.parsed_title||'-')}</td>
+      <td><span class="badge gray">${m.category||'-'}</span></td>
+      <td style="max-width:200px;font-size:11px;color:var(--text2)">${esc(m.reason||'解析失败')}</td>
+      <td>${m.source_link ? `<a href="${esc(m.source_link)}" target="_blank" style="font-size:11px">🔗 原消息</a>` : '-'}</td>
+      <td>
+        <button class="btn btn-sm success" onclick="retryUnrec(${m.id})">重试匹配</button>
+        <button class="btn btn-sm danger" onclick="deleteUnrec(${m.id})">删除</button>
+      </td></tr>`).join('')}
+    </table><div class="sub mt-16">共 ${unrecTotal} 条未能自动识别，可点击"重试匹配"或手动对照原消息修改</div>`;
+  renderPagination('unrecPagination', unrecPage, unrecTotal, parseInt(pageSize), (p) => { unrecPage = p; loadUnrecognized(); });
+}
+
+async function retryUnrec(id) {
+  const r = await apiPost('/api/unrecognized/retry', { id });
+  if (r?.success) { toast('✅ ' + r.message, 'success'); loadUnrecognized(); }
+  else toast('❌ ' + (r?.message || '重试失败'), 'error');
+}
+
+async function retryAllUnrecognized() {
+  if (!confirm('确定重新匹配所有未识别记录？')) return;
+  toast('正在批量重试...', 'info');
+  const r = await apiPost('/api/tmdb/unrecognized/retry-all');
+  if (r?.success) { toast(r.message, 'success'); loadUnrecognized(); }
+  else toast(r?.message || '重试失败', 'error');
+}
+
+async function deleteUnrec(id) {
+  if (!confirm('确定删除此未识别记录？')) return;
+  const r = await apiPost('/api/unrecognized/delete', { id });
+  if (r?.success) { toast('已删除', 'success'); loadUnrecognized(); }
+  else toast(r?.message || '删除失败', 'error');
+}
+
+async function clearAllUnrecognized() {
+  if (!confirm('确定清除所有未识别记录？')) return;
+  const r = await apiPost('/api/media/unrecognized/clear');
+  if (r?.success) { toast(r.message, 'success'); loadUnrecognized(); }
+  else toast(r?.message || '操作失败', 'error');
+}
+
+// ========== TMDB / Emby Settings ==========
+
+async function loadTmdbSettings() {
+  const r = await api('/api/tmdb/config');
+  if (!r) return;
+  const tmdb = r.tmdb || {};
+  const emby = r.emby || {};
+  const enrich = r.enrich || {};
+  document.getElementById('s_tmdb_key').value = tmdb.api_key || '';
+  document.getElementById('s_tmdb_api').value = tmdb.api_base || 'https://tmdb.255432.xyz/api/3';
+  document.getElementById('s_tmdb_img').value = tmdb.image_base || 'https://tmdb.255432.xyz/t/p';
+  document.getElementById('s_emby_url').value = emby.url || '';
+  document.getElementById('s_emby_key').value = emby.api_key || '';
+  document.getElementById('s_enrich_enabled').checked = enrich.enabled !== false;
+}
+
+async function saveTmdbSettings() {
+  const body = {
+    tmdb: {
+      api_key: document.getElementById('s_tmdb_key').value || '',
+      api_base: document.getElementById('s_tmdb_api').value || 'https://tmdb.255432.xyz/api/3',
+      image_base: document.getElementById('s_tmdb_img').value || 'https://tmdb.255432.xyz/t/p',
+    },
+    emby: {
+      url: document.getElementById('s_emby_url').value || '',
+      api_key: document.getElementById('s_emby_key').value || '',
+    },
+    enrich: {
+      enabled: document.getElementById('s_enrich_enabled').checked,
+    },
+  };
+  const r = await apiPost('/api/tmdb/save', body);
+  if (r?.success) toast('✅ ' + r.message, 'success');
+  else toast('❌ ' + (r?.message || '保存失败'), 'error');
+}
+
+async function tmdbTest() {
+  const key = document.getElementById('s_tmdb_key').value;
+  if (!key) { toast('请先填写 API Key', 'error'); return; }
+  const base = document.getElementById('s_tmdb_api').value || 'https://tmdb.255432.xyz/api/3';
+  toast('测试 TMDB 连接...', 'info');
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 10000);
+    const r = await fetch(`${base}/search/movie?api_key=${key}&query=test&language=zh-CN`, { signal: ctrl.signal });
+    if (r.status === 200) toast('✅ TMDB 连接正常', 'success');
+    else toast('❌ TMDB 返回 ' + r.status, 'error');
+  } catch (e) {
+    toast('❌ TMDB 连接失败: ' + e.message, 'error');
+  }
+}
+
+async function testEmby() {
+  const url = document.getElementById('s_emby_url').value;
+  const key = document.getElementById('s_emby_key').value;
+  if (!url || !key) { toast('请先填写 Emby 地址和 API Key', 'error'); return; }
+  toast('测试 Emby 连接...', 'info');
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 10000);
+    const r = await fetch(`${url}/emby/System/Info?api_key=${key}`, { signal: ctrl.signal });
+    if (r.status === 200) {
+      const info = await r.json();
+      toast('✅ Emby 连接正常: ' + (info.ServerName || ''), 'success');
+    } else toast('❌ Emby 返回 ' + r.status, 'error');
+  } catch (e) {
+    toast('❌ Emby 连接失败: ' + e.message, 'error');
+  }
+}
+
+async function triggerEmbyRefresh() {
+  const r = await apiPost('/api/emby/refresh');
+  if (r?.success) toast('✅ ' + r.message, 'success');
+  else toast('❌ ' + (r?.reason || '通知失败'), 'error');
+}
+
+// ========== Scan ==========
+function populateScanDropdown(rules) {
+  const sel = document.getElementById('scanChannelSelect');
+  if (!sel) return;
+  const items = rules || allChannelRules;
+  sel.innerHTML = '<option value="">-- 选择频道 --</option>' + items.map(r =>
+    `<option value="${esc(r.channel_id)}">${esc(r.channel_name || r.channel_id)} (${r.channel_id})</option>`
+  ).join('');
+}
+async function startScan() {
+  const channelId = document.getElementById('scanChannelSelect').value;
+  const limit = parseInt(document.getElementById('scanLimit').value) || 200;
+  if (!channelId) { toast('请选择频道', 'error'); return; }
+  const btn = document.getElementById('btnScan');
+  const statusEl = document.getElementById('scanStatus');
+  statusEl.style.display = 'block';
+  statusEl.textContent = '扫描中...请勿关闭页面';
+  btn.disabled = true;
+  const r = await apiPost('/api/scan/channel', { channel_id: parseInt(channelId), limit });
+  btn.disabled = false;
+  if (r?.success) { statusEl.textContent = r.message; toast(r.message, 'success'); loadMedia(); }
+  else { statusEl.textContent = '失败: ' + (r?.message || '未知错误'); toast('扫描失败', 'error'); }
+}
+
+async function scanSingleChannel(channelId) {
+  const limit = prompt('扫描数量限制：', '200');
+  if (limit === null) return;
+  toast('开始扫描...', 'info');
+  const r = await apiPost('/api/scan/channel', { channel_id: parseInt(channelId), limit: parseInt(limit) || 200 });
+  if (r?.success) toast(r.message, 'success');
+  else toast(r?.message || '扫描失败', 'error');
+}
+
+async function scanAllChannels() {
+  if (!confirm('确定扫描所有已启用规则的频道？')) return;
+  const el = document.getElementById('scanAllStatus');
+  el.style.display = 'block';
+  el.textContent = '开始扫描所有频道...';
+  const rules = allChannelRules.length ? allChannelRules : (await api('/api/channel-rules'))?.rules || [];
+  if (!rules.length) { el.textContent = '获取规则列表失败'; return; }
+  let total = 0;
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+    el.textContent = `正在扫描 ${rule.channel_name || rule.channel_id}...`;
+    const r = await apiPost('/api/scan/channel', { channel_id: parseInt(rule.channel_id), limit: 200 });
+    if (r?.success) {
+      const match = r.message.match(/新增 (\d+) 条/);
+      const count = match ? parseInt(match[1]) : 0;
+      total += count;
+    }
+  }
+  el.textContent = `全部扫描完成，共新增 ${total} 条记录`;
+  toast(`扫描完成，新增 ${total} 条`, 'success');
+}
+
+// ========== Full Import ==========
+let _fullImportRunning = false;
+
+async function fullImport() {
+  if (_fullImportRunning) return;
+  if (!confirm('⚠️ 确定执行全量入库？\n\n这将会遍历所有已启用规则的频道，扫描全部历史消息。\n仅限第一次部署使用！')) return;
+
+  const btn = document.getElementById('btnFullImport');
+  const el = document.getElementById('fullImportStatus');
+  el.style.display = 'block';
+  el.innerHTML = '⏳ 准备中...';
+  el.style.color = 'var(--orange)';
+  btn.disabled = true;
+  _fullImportRunning = true;
+
+  const start = await apiPost('/api/scan/full-import/start');
+  if (!start?.success) {
+    el.innerHTML = '❌ ' + (start?.message || '启动失败');
+    el.style.color = 'var(--red)';
+    btn.disabled = false;
+    _fullImportRunning = false;
+    return;
+  }
+
+  function renderProgress(data) {
+    const pct = data.total > 0 ? Math.round(data.completed / data.total * 100) : 0;
+    el.innerHTML = `
+      <div style="margin-bottom:8px;font-size:15px;font-weight:700">
+        ⏳ 正在扫描: <span style="color:var(--blue)">${data.current || '—'}</span>
+        <span style="color:var(--text2);font-weight:400"> (${data.completed}/${data.total})</span>
+      </div>
+      <div style="background:var(--border);border-radius:6px;height:10px;overflow:hidden;margin-bottom:8px">
+        <div style="background:var(--green);height:100%;width:${pct}%;transition:width .3s"></div>
+      </div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:4px">
+        已新增: <b style="color:var(--green)">${data.new_records}</b> 条
+      </div>
+      <div style="font-size:13px;color:var(--text2)">
+        当前结果: <span>${data.result || '等待中...'}</span>
+      </div>
+    `;
+  }
+
+  // Sequential: scan one channel per call
+  let done = false;
+  while (!done) {
+    const r = await apiPost('/api/scan/full-import');
+    if (!r) {
+      el.innerHTML = '❌ 请求失败';
+      el.style.color = 'var(--red)';
+      break;
+    }
+    renderProgress(r);
+    done = r.done;
+    if (!done) {
+      // small delay between channels to let UI breathe
+      await new Promise(r => setTimeout(r, 500));
+    } else {
+      el.style.color = 'var(--green)';
+      el.querySelector('div:first-child').innerHTML = '✅ ' + (r.message || '全量入库完成');
+      toast(r.message || '全量入库完成', 'success');
+      loadMedia();
+    }
+  }
+
+  btn.disabled = false;
+  _fullImportRunning = false;
+}
+
+// ========== Notification ==========
+// ========== Cache ==========
+async function loadCache() {
+  const r = await api('/api/cache');
+  if (!r) return;
+  document.getElementById('cacheCount').textContent = r.file_count || 0;
+  document.getElementById('cacheSize').textContent = formatSize(r.total_size);
+  document.getElementById('cacheMedia').textContent = r.media_count || 0;
+  if (r.details?.length) {
+    document.getElementById('cacheDetail').innerHTML = '<table><tr><th>Message ID</th><th>文件数</th><th>大小</th></tr>' +
+      r.details.map(d => `<tr><td>${d.message_id}</td><td>${d.file_count}</td><td>${formatSize(d.size)}</td></tr>`).join('') + '</table>';
+  } else { document.getElementById('cacheDetail').innerHTML = '<div class="empty">暂无缓存</div>'; }
+}
+async function clearCache() {
+  if (!confirm('确定清空所有缓存？')) return;
+  const r = await apiPost('/api/cache/clear');
+  if (r?.success) { toast('缓存已清空', 'success'); loadCache(); } else toast('操作失败', 'error');
+}
+
+// ========== Auth (Phone Login) ==========
+async function loadAuthStatus() {
+  const r = await api('/api/auth/status');
+  if (!r) return;
+  const badge = document.getElementById('authStatusBadge');
+  const info = document.getElementById('authUserInfo');
+  const loginForm = document.getElementById('authLoginForm');
+  const logoutBtn = document.getElementById('authLogoutBtn');
+  if (r.logged_in) {
+    badge.className = 'badge green';
+    badge.textContent = '已连接';
+    info.style.display = 'block';
+    info.innerHTML = `ID: ${r.user_id} | ${r.first_name || ''}${r.username ? ' (@'+r.username+')' : ''}${r.phone ? ' | '+r.phone : ''}`;
+    loginForm.querySelector('#authSendCodeBtn').style.display = 'none';
+    loginForm.querySelector('#authCodeRow').style.display = 'none';
+    logoutBtn.style.display = 'block';
+    document.getElementById('s_tg_phone').value = r.phone || '';
+  } else {
+    badge.className = 'badge red';
+    badge.textContent = '未登录';
+    info.style.display = 'none';
+    loginForm.querySelector('#authSendCodeBtn').style.display = 'block';
+    loginForm.querySelector('#authCodeRow').style.display = 'none';
+    logoutBtn.style.display = 'none';
+  }
+}
+
+function authSetMsg(msg, isError) {
+  const el = document.getElementById('authMessage');
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--red)' : 'var(--green)';
+}
+function authShowVerify() {
+  document.getElementById('authSendCodeBtn').style.display = 'none';
+  document.getElementById('authCodeRow').style.display = 'block';
+  document.getElementById('authVerifyBtn').style.display = 'block';
+  document.getElementById('authPasswordRow').style.display = 'none';
+  document.getElementById('authPasswordBtn').style.display = 'none';
+}
+function authShowPassword() {
+  document.getElementById('authVerifyBtn').style.display = 'none';
+  document.getElementById('authPasswordRow').style.display = 'block';
+  document.getElementById('authPasswordBtn').style.display = 'block';
+}
+
+async function authSendCode() {
+  const phone = document.getElementById('s_tg_phone').value.trim();
+  if (!phone) { authSetMsg('请输入手机号', true); return; }
+  authSetMsg('发送中...', false);
+  document.getElementById('authSendCodeBtn').disabled = true;
+  const r = await apiPost('/api/auth/send-code', { phone });
+  document.getElementById('authSendCodeBtn').disabled = false;
+  if (r?.success) {
+    authSetMsg(r.message || '验证码已发送', false);
+    authShowVerify();
+  } else {
+    authSetMsg(r?.message || '发送失败', true);
+  }
+}
+async function authVerifyCode() {
+  const phone = document.getElementById('s_tg_phone').value.trim();
+  const code = document.getElementById('s_tg_code').value.trim();
+  if (!code) { authSetMsg('请输入验证码', true); return; }
+  authSetMsg('验证中...', false);
+  document.getElementById('authVerifyBtn').disabled = true;
+  const r = await apiPost('/api/auth/verify-code', { phone, code });
+  document.getElementById('authVerifyBtn').disabled = false;
+  if (r?.success) {
+    if (r.need_password) {
+      authShowPassword();
+      authSetMsg('请输入两步验证密码', false);
+    } else {
+      authSetMsg('登录成功', false);
+      loadAuthStatus();
+    }
+  } else {
+    authSetMsg(r?.message || '验证失败', true);
+  }
+}
+async function authCheckPassword() {
+  const password = document.getElementById('s_tg_password').value;
+  if (!password) { authSetMsg('请输入密码', true); return; }
+  authSetMsg('验证中...', false);
+  document.getElementById('authPasswordBtn').disabled = true;
+  const r = await apiPost('/api/auth/check-password', { password });
+  document.getElementById('authPasswordBtn').disabled = false;
+  if (r?.success) {
+    authSetMsg('登录成功', false);
+    loadAuthStatus();
+  } else {
+    authSetMsg(r?.message || '密码错误', true);
+  }
+}
+async function authLogout() {
+  if (!confirm('确定退出登录？')) return;
+  const r = await apiPost('/api/auth/logout');
+  if (r?.success) {
+    authSetMsg('已退出登录', false);
+    loadAuthStatus();
+  }
+}
+
+// ========== Settings ==========
+async function loadSettings() {
+  const r = await api('/api/config');
+  if (!r) return;
+  const tg = r.telegram || {};
+  const px = r.proxy || {};
+  document.getElementById('s_px_enabled').value = px.enabled ? 'true' : 'false';
+  document.getElementById('s_px_scheme').value = px.scheme || 'socks5';
+  document.getElementById('s_px_host').value = px.hostname || '';
+  document.getElementById('s_px_port').value = px.port || '';
+  const st = r.stream || {};
+  document.getElementById('s_st_host').value = st.host || '0.0.0.0';
+  document.getElementById('s_st_port').value = st.port || 8001;
+  document.getElementById('s_st_base').value = st.base_url || '';
+  document.getElementById('s_st_local').value = st.local_url || '';
+  document.getElementById('s_st_token').value = st.token || '';
+  // Load notification & auto-monitor settings
+  const nt = await api('/api/notification/settings');
+  if (nt) {
+    document.getElementById('s_nt_enabled').value = nt.notify_enabled === 'true' ? 'true' : 'false';
+    document.getElementById('s_nt_target').value = nt.notify_target || '';
+    if (nt.bot_token) document.getElementById('s_nt_bot_token').placeholder = '已设置 Bot Token，留空不改';
+  }
+  document.getElementById('s_mt_interval').value = tg.monitor_interval_minutes || 10;
+  loadAuthStatus();
+}
+
+async function saveAllSettings() {
+  const safeVal = (id) => document.getElementById(id).value || '';
+  const safeInt = (id, def) => { const v = document.getElementById(id).value; return v ? parseInt(v) : def; };
+  const body = {
+    telegram: {},
+    proxy: {
+      enabled: document.getElementById('s_px_enabled').value === 'true',
+      scheme: safeVal('s_px_scheme'),
+      hostname: safeVal('s_px_host'),
+      port: safeInt('s_px_port', 10808),
+    },
+    stream: {
+      host: safeVal('s_st_host'),
+      port: safeInt('s_st_port', 8001),
+      base_url: safeVal('s_st_base'),
+      local_url: safeVal('s_st_local'),
+      token: safeVal('s_st_token'),
+    },
+  };
+  const r = await apiPost('/api/settings/save', body);
+  if (r?.success) toast('设置已保存，部分设置需重启生效', 'success');
+  else toast(r?.message || '保存失败', 'error');
+  // Save notification settings
+  const ntBody = {
+    notify_enabled: document.getElementById('s_nt_enabled').value === 'true' ? 'true' : 'false',
+    notify_target: document.getElementById('s_nt_target').value || '',
+    bot_token: document.getElementById('s_nt_bot_token').value || '',
+  };
+  await apiPost('/api/notification/save', ntBody);
+  // Save auto-monitor interval
+  const interval = parseInt(document.getElementById('s_mt_interval').value);
+  if (interval > 0) {
+    await apiPost('/api/settings/save', { telegram: { monitor_interval: interval } });
+  }
+}
+
+// ========== Page Router ==========
+function loadPage(name) {
+  switch(name) {
+    case 'dashboard': loadDashboard(); break;
+    case 'telegram': loadTelegram(); break;
+    case 'media': Promise.all([loadMedia(), populateCategoryFilters()]); break;
+    case 'unrecognized': loadUnrecognized(); break;
+    case 'metadata': loadTmdbSettings(); break;
+    case 'scan': populateScanDropdown(); break;
+    case 'cache': loadCache(); break;
+    case 'settings': loadSettings(); break;
+  }
+}
+
+const initPage = location.hash.replace('#','') || 'dashboard';
+switchTab(initPage);
+setInterval(loadDashboard, 30000);
+</script>
+</body>
+</html>
