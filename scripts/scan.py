@@ -8,7 +8,13 @@ TG Emby Streamer — 命令行扫描工具
   python scripts/scan.py -c CHANNEL_ID        扫描指定频道
   python scripts/scan.py -c CHANNEL_ID --limit 500
 
-在 Docker 容器内执行:
+systemd + venv 部署（⚠️ 先停服务，Telegram 会话不可双开）:
+  sudo systemctl stop tg-emby.service
+  cd /home/Dirige/TGEMBY && CONFIG_PATH=/home/ubuntu/tg-emby/config/config.yaml \
+      ./venv/bin/python scripts/scan.py --all --limit 0
+  sudo systemctl start tg-emby.service
+
+Docker 容器内执行:
   docker exec -it tg-emby-streamer python scripts/scan.py --all
 """
 import argparse

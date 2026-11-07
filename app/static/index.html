@@ -328,19 +328,29 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
   <div class="card mb-16" style="border-color:var(--accent);border-width:2px">
     <h3 style="font-size:16px;display:flex;align-items:center;gap:8px">📟 命令行扫描（推荐长时间/全量任务）</h3>
     <p style="font-size:13px;color:var(--text2);margin-bottom:12px">
-      进入容器执行，实时查看每条入库记录，支持 Ctrl+C 随时停止，不会因浏览器关闭而中断。
+      实时查看每条入库记录，Ctrl+C 随时停止，浏览器关闭不影响。
+      <span style="color:var(--yellow)">⚠️ 本机为 systemd 部署：先停服务再执行（Telegram 会话不可双开），扫完启动。</span>
     </p>
+
+    <div style="font-size:13px;font-weight:600;margin-bottom:6px">systemd + venv 部署（本机）</div>
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;font-size:13px;line-height:2">
-      <div><span style="color:var(--text2)"># 全量扫描所有频道（limit=0 表示全部消息）</span></div>
-      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 0</code></div>
-      <div style="margin-top:8px"><span style="color:var(--text2)"># 扫描单个频道</span></div>
-      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py -c 频道ID --limit 0</code></div>
-      <div style="margin-top:8px"><span style="color:var(--text2)"># 快捷：每频道扫 200 条（测试用，limit=0=全部消息）</span></div>
-      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 200</code></div>
+      <div><span style="color:var(--text2)"># 1. 停服务（会话独占）</span></div>
+      <div><code style="font-size:13px">sudo systemctl stop tg-emby.service</code></div>
+      <div style="margin-top:8px"><span style="color:var(--text2)"># 2. 全量扫描所有频道（limit=0 表示全部消息）</span></div>
+      <div><code style="font-size:13px">cd /home/Dirige/TGEMBY &amp;&amp; CONFIG_PATH=/home/ubuntu/tg-emby/config/config.yaml ./venv/bin/python scripts/scan.py --all --limit 0</code></div>
+      <div style="margin-top:8px"><span style="color:var(--text2)"># 2b. 扫描单个频道</span></div>
+      <div><code style="font-size:13px">cd /home/Dirige/TGEMBY &amp;&amp; CONFIG_PATH=/home/ubuntu/tg-emby/config/config.yaml ./venv/bin/python scripts/scan.py -c 频道ID --limit 0</code></div>
+      <div style="margin-top:8px"><span style="color:var(--text2)"># 3. 扫完启动服务</span></div>
+      <div><code style="font-size:13px">sudo systemctl start tg-emby.service</code></div>
     </div>
-    <div style="display:flex;gap:8px">
-      <button class="btn" onclick="navigator.clipboard?.writeText('docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 0');toast('已复制','success')">📋 全量扫描 (limit=0)</button>
-      <button class="btn" onclick="navigator.clipboard?.writeText('docker exec -it tg-emby-streamer python scripts/scan.py -c 频道ID --limit 0');toast('已复制','success')">📋 单频道扫描</button>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn" onclick="navigator.clipboard?.writeText('sudo systemctl stop tg-emby.service\ncd /home/Dirige/TGEMBY && CONFIG_PATH=/home/ubuntu/tg-emby/config/config.yaml ./venv/bin/python scripts/scan.py --all --limit 0\nsudo systemctl start tg-emby.service');toast('已复制','success')">📋 复制全量扫描命令</button>
+      <button class="btn" onclick="navigator.clipboard?.writeText('sudo systemctl stop tg-emby.service\ncd /home/Dirige/TGEMBY && CONFIG_PATH=/home/ubuntu/tg-emby/config/config.yaml ./venv/bin/python scripts/scan.py -c 频道ID --limit 0\nsudo systemctl start tg-emby.service');toast('已复制','success')">📋 复制单频道扫描</button>
+    </div>
+
+    <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text2)">Docker 部署（另起实例时使用）</div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;font-size:13px;line-height:2">
+      <div><code style="font-size:13px">docker exec -it tg-emby-streamer python scripts/scan.py --all --limit 0</code></div>
     </div>
   </div>
 
