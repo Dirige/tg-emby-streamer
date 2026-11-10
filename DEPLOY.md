@@ -85,7 +85,13 @@ bash scripts/install.sh --url http://192.168.1.20:8001 --skip-login
 
 脚本会创建数据目录、生成随机密码和播放 Token、导入 19 条默认规则、启动 TGEmby/MetaTube。默认 `.env` 的 `COMPOSE_PROFILES=emby` 会同时启动一个独立 Emby，并尝试下载官方 **Emby 版** MetaTube 插件。
 
-发布镜像目标是 `dirige/tgemby:latest`。若镜像尚未发布或不可拉取，脚本会自动用随包源码构建；也可明确要求本地构建：
+安装默认拉取 `dirige/tgemby:share-20261109`（见 `.env.example` 的 `TGEMBY_IMAGE`）。该镜像同时通过 GitHub Actions 发布到 **ghcr.io/dirige/tgemby:latest**（仓库首次发布后把 Package 设为 Public 即可匿名拉取）；如果你愿意收到它，把 `tgemby/.env` 里的 `TGEMBY_IMAGE` 改成：
+
+```env
+TGEMBY_IMAGE=ghcr.io/dirige/tgemby:latest
+```
+
+国内服务器拉取 GHCR 需按第 4 节给 Docker 配置自身代理，或使用随包离线镜像。若镜像尚未发布或不可拉取，脚本会自动用随包源码构建；也可明确要求本地构建：
 
 ```bash
 bash scripts/install.sh --build --url http://192.168.1.20:8001 --skip-login

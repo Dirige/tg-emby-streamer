@@ -104,7 +104,7 @@ tgemby/
 ## 快速开始 — Docker 一键部署
 
 > 📘 **完整中文教程见 [DEPLOY.md](DEPLOY.md)**，包含完整命令、国内代理、MetaTube 插件、媒体包导入和 Emby 设置。
-> 镜像发布目标：`docker.io/dirige/tgemby`（linux/amd64 + linux/arm64）。镜像不可拉取时脚本自动从随包源码构建；本地构建不代表已经上传 Docker Hub。
+> 镜像由 GitHub Actions 双架构（amd64 + arm64）构建并发布到 **ghcr.io/dirige/tgemby:latest**（首次发布后把 Package 可见性改为 Public 即可匿名拉取）。配置了 `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` 仓库密钥时会同时发布到 Docker Hub；本地 `docker build` 不代表已经上传任一镜像仓库。
 
 ### 前置条件
 
