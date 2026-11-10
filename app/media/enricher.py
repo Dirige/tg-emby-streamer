@@ -2,11 +2,12 @@ import re
 import json
 import logging
 import httpx
+from pathlib import Path
 from sqlalchemy import select
 from app.config import settings
 from app.database import async_session
 from app.models import Media, UnrecognizedMedia
-from app.media.nfo_generator import generate_nfo, generate_episode_nfo
+from app.media.nfo_generator import SOURCE_ONLY_CATEGORIES, _atomic_write, generate_nfo, generate_episode_nfo, generate_source_record_nfo
 from app.media.image_downloader import download_images, download_episode_still, _download_image, _is_image
 
 logger = logging.getLogger(__name__)
@@ -142,17 +143,53 @@ async def enrich_media(media_id: int) -> dict:
         record = await session.get(Media, media_id)
         if not record:
             return {"success": False, "reason": "记录不存在"}
+        if record.category in SOURCE_ONLY_CATEGORIES:
+            # 这些分类不属于普通电影；TMDB 首条模糊结果会造成错片名和错封面。
+            # 只保留原消息标题，封面使用这条视频自己的 Telegram 缩略图。
+            if not record.strm_path or not record.title:
+                return {"success": False, "reason": "无已确认来源标题或 STRM 路径"}
+            poster_path = ""
+            try:
+                from app.telegram.client import get_client
+                client = await get_client()
+                message = await client.get_messages(int(record.chat_id), record.message_id)
+                media = message.video or message.document
+                thumbs = getattr(media, "thumbs", None) or []
+                thumbs = [thumb for thumb in thumbs if (getattr(thumb, "file_size", 0) or 0) <= 2 * 1024 * 1024]
+                if thumbs and record.strm_path:
+                    thumb = max(thumbs, key=lambda item: (getattr(item, "width", 0) or 0) * (getattr(item, "height", 0) or 0))
+                    image = await client.download_media(thumb.file_id, in_memory=True)
+                    data = image.getvalue() if image else b""
+                    if len(data) <= 2 * 1024 * 1024 and _is_image(data[:16]):
+                        poster = Path(record.strm_path).with_name(f"{Path(record.strm_path).stem}-poster.jpg")
+                        _atomic_write(poster, data)
+                        poster_path = str(poster)
+            except Exception as exc:
+                logger.info("Source thumbnail unavailable media=%s: %s", media_id, type(exc).__name__)
+            if not poster_path and record.poster_path:
+                poster = Path(record.poster_path)
+                if poster.parent == Path(record.strm_path).parent and poster.is_file() and _is_image(poster.read_bytes()[:16]):
+                    poster_path = str(poster)
+            nfo = generate_source_record_nfo(record, poster_path)
+            if nfo.get("success"):
+                record.nfo_path = nfo["nfo_path"]
+            record.poster_path = poster_path or None
+            await session.commit()
+            return {"success": bool(nfo.get("success")), "source_metadata_only": True,
+                    "nfo": nfo, "images": {"poster_path": poster_path} if poster_path else {},
+                    "reason": "" if nfo.get("success") else nfo.get("reason", "来源 NFO 生成失败")}
         # JAV 完全独立于 TMDB；没有 TMDB key 也必须能取得封面和通知字段。
         if record.category == "18+":
             from app.media import metatube
-            from app.media.jav import detect_jav_code
+            from app.media.jav import jav_code_conflict, resolve_jav_code
             from app.media.jav_metadata import notification_metadata
+            from app.media.nfo_generator import generate_jav_record_nfo
 
-            code = detect_jav_code(record.file_name, record.caption, record.title)
+            code = resolve_jav_code(record.file_name, record.caption, record.title)
             if not code:
                 record.poster_path = None
                 await session.commit()
-                return {"success": False, "reason": "未识别到番号"}
+                return {"success": False, "reason": "原文件名和说明的番号冲突，未自动改号" if jav_code_conflict(record.file_name, record.caption) else "未识别到番号"}
             movie = await metatube.find_movie(code)
             metadata = notification_metadata(record, code, movie)
             # 推送缓存与 Emby 的海报目录隔离；不沿用公用或被插件写错的图片。
@@ -174,13 +211,18 @@ async def enrich_media(media_id: int) -> dict:
             if downloaded:
                 record.poster_path = str(poster)
                 images["poster_path"] = str(poster)
+            # 不再让 Emby 自行模糊匹配 JAV；来源番号写入每版 NFO 并锁定身份。
+            nfo = generate_jav_record_nfo(record, movie, record.poster_path or "")
+            if nfo.get("success"):
+                record.nfo_path = nfo["nfo_path"]
             await session.commit()
-            success = bool(record.poster_path)
+            success = bool(record.poster_path) and bool(nfo.get("success"))
             return {
                 **metadata,
                 "success": success,
                 "images": images,
-                "reason": "" if success else ("MetaTube 封面下载失败" if movie else "MetaTube 未匹配到对应番号"),
+                "nfo": nfo,
+                "reason": "" if success else (nfo.get("reason") if not nfo.get("success") else ("MetaTube 封面下载失败" if movie else "MetaTube 未匹配到对应番号")),
             }
         if not settings.tmdb.api_key:
             return {"success": False, "reason": "TMDB API Key 未配置，请在「元数据」页面设置"}

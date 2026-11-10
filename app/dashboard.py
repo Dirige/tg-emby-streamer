@@ -6,7 +6,8 @@ import shutil
 import asyncio
 import time
 from pathlib import Path
-from fastapi import APIRouter, Request
+from typing import Literal
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 from app.config import settings, BASE_DIR, save_config, save_config_value, get_config_value
 from app.database import async_session
@@ -14,7 +15,7 @@ from app.models import Media, ChannelRule, Category, UnrecognizedMedia
 from app.media.strm import remove_old_strm
 from app.telegram.monitor import scan_channel, is_video_message
 from app.telegram.client import get_client, stop_client, test_connection, send_code, verify_code, check_password, get_auth_status
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func, or_
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -219,11 +220,16 @@ async def list_channel_rules():
     async with async_session() as session:
         result = await session.execute(select(ChannelRule).order_by(ChannelRule.channel_id))
         rules = result.scalars().all()
+        counts = await session.execute(
+            select(Media.chat_id, func.count(Media.id)).group_by(Media.chat_id)
+        )
+        media_count = {chat_id: total for chat_id, total in counts}
     return {
         "rules": [{
             "id": r.id,
             "channel_id": r.channel_id,
             "channel_name": r.channel_name or "",
+            "media_count": int(media_count.get(r.channel_id, 0)),
             "category": r.category or "",
             "title_rule": r.title_rule or "",
             "episode_rule": r.episode_rule or "",
@@ -233,6 +239,7 @@ async def list_channel_rules():
             "filename_rule": r.filename_rule or "",
             "filename_template": r.filename_template or "",
             "enabled": r.enabled,
+            "strict_import": bool(r.strict_import),
         } for r in rules]
     }
 
@@ -260,6 +267,7 @@ async def get_channel_rule(channel_id: str):
             "filename_rule": r.filename_rule or "",
             "filename_template": r.filename_template or "",
             "enabled": r.enabled,
+            "strict_import": bool(r.strict_import),
         }
     }
 
@@ -273,6 +281,8 @@ async def save_channel_rule(request: Request):
     channel_id = str(body.get("channel_id", "")).strip()
     if not channel_id:
         return {"success": False, "message": "频道 ID 不能为空"}
+    if "strict_import" in body and not isinstance(body["strict_import"], bool):
+        return {"success": False, "message": "安全校验选项必须为布尔值"}
     try:
         async with async_session() as session:
             result = await session.execute(
@@ -298,6 +308,8 @@ async def save_channel_rule(request: Request):
             rule.filename_rule = body.get("filename_rule", "")
             rule.filename_template = body.get("filename_template", "")
             rule.enabled = body.get("enabled", True)
+            if "strict_import" in body:
+                rule.strict_import = body["strict_import"]
             await session.commit()
         return {"success": True, "message": "规则已保存"}
     except Exception as e:
@@ -407,17 +419,50 @@ CATEGORY_MAP = {
 
 
 @router.get("/api/media")
-async def list_media(page: int = 1, page_size: int = 20, category: str = ""):
+async def list_media(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1),
+    category: str = "",
+    search: str = "",
+    search_field: Literal["title", "file_name", "channel", "all"] = "title",
+):
+    conditions = []
+    if category:
+        conditions.append(Media.category == CATEGORY_MAP.get(category, category))
+    keyword = search.strip()
+    if keyword:
+        # 与列表显示一致：有标题时不把正常的 .mp4 文件名误当成标题匹配。
+        display_title = func.coalesce(func.nullif(Media.title, ""), Media.file_name)
+        title_match = display_title.icontains(keyword, autoescape=True)
+        file_match = Media.file_name.icontains(keyword, autoescape=True)
+        named_channels = select(ChannelRule.channel_id).where(
+            ChannelRule.channel_name.icontains(keyword, autoescape=True)
+        )
+        channel_match = or_(
+            Media.chat_id.icontains(keyword, autoescape=True),
+            Media.chat_id.in_(named_channels),
+        )
+        if search_field == "title":
+            conditions.append(title_match)
+        elif search_field == "file_name":
+            conditions.append(file_match)
+        elif search_field == "channel":
+            conditions.append(channel_match)
+        else:
+            conditions.append(or_(
+                title_match, file_match, channel_match,
+                Media.caption.icontains(keyword, autoescape=True),
+                Media.tmdb_title.icontains(keyword, autoescape=True),
+            ))
     async with async_session() as session:
-        query = select(Media).order_by(Media.created_at.desc())
-        if category:
-            db_cat = CATEGORY_MAP.get(category, category)
-            query = query.where(Media.category == db_cat)
-        count_result = await session.execute(query)
-        all_records = count_result.scalars().all()
-        total = len(all_records)
+        count_result = await session.execute(
+            select(func.count()).select_from(Media).where(*conditions)
+        )
+        total = count_result.scalar_one()
         offset = (page - 1) * page_size
-        query = query.offset(offset).limit(page_size)
+        query = (select(Media).where(*conditions)
+                 .order_by(Media.created_at.desc(), Media.id.desc())
+                 .offset(offset).limit(page_size))
         result = await session.execute(query)
         records = result.scalars().all()
     items = []

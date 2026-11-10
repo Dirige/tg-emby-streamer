@@ -35,6 +35,12 @@ def parse_caption(caption: str, code: str) -> dict:
         match = re.search(r"(?:演员|演員|女优|女優|主演|Actors?)\s*[:：]\s*(.+)", line, re.I)
         if match:
             fields["actors"] = _actors(match.group(1))
+    if not fields.get("title"):
+        first = (caption or "").strip().splitlines()
+        if first and detect_jav_code(first[0]) == code:
+            title = _clean_title(first[0], code)
+            if title and title != first[0].strip():
+                fields["title"] = title
     return fields
 
 
@@ -49,6 +55,10 @@ def read_nfo(strm_path: str | None, code: str) -> dict:
         title = root.findtext("title") or ""
         detected = detect_jav_code(title)
         if detected and detected != code:
+            return {}
+        original = root.findtext("originaltitle") or ""
+        original_code = detect_jav_code(original)
+        if original_code and original_code != code:
             return {}
         return {
             "title": _clean_title(root.findtext("originaltitle") or title, code),

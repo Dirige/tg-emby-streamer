@@ -158,7 +158,8 @@ class EnrichQueue:
         if settings.emby.url and settings.emby.api_key:
             try:
                 from app.media.emby_notifier import refresh_library
-                await refresh_library()
+                codes = [result.get("jav_code") for result in batch.results if result.get("category") == "18+"]
+                await refresh_library(jav_codes=[code for code in codes if code])
             except Exception as e:
                 logger.warning(f"Emby refresh after enrich batch failed: {e}")
 

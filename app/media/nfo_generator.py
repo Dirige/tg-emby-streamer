@@ -1,7 +1,137 @@
 import logging
+import os
+import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+SOURCE_ONLY_CATEGORIES = {"无码", "国产", "水果派"}
+
+
+def _atomic_write(path: Path, content: bytes) -> None:
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as file:
+            temporary = Path(file.name)
+            file.write(content)
+        temporary.chmod(0o644)
+        os.replace(temporary, path)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+def generate_jav_nfo(
+    strm_path: str | None,
+    code: str,
+    title: str = "",
+    actors: list[str] | None = None,
+    movie: dict | None = None,
+    poster_path: str = "",
+) -> dict:
+    """番号作为身份；每个 STRM 独立 NFO，同目录的同番号共享一张封面。"""
+    from app.media.jav import detect_jav_code
+    from app.media.image_downloader import _is_image
+
+    if not strm_path or detect_jav_code(code) != code:
+        return {"success": False, "reason": "无 STRM 路径或有效番号"}
+    movie = movie or {}
+    if movie and detect_jav_code(movie.get("number")) != code:
+        return {"success": False, "reason": "MetaTube 番号与来源不一致"}
+    path = Path(strm_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        root = ET.Element("movie")
+        title = (title or "").strip()
+        if title == "未获取" or (detect_jav_code(title) and detect_jav_code(title) != code):
+            title = ""
+        name = title if title.startswith(code) else f"{code} {title}".strip()
+        ET.SubElement(root, "title").text = name
+        ET.SubElement(root, "sorttitle").text = code
+        original = movie.get("title") or name
+        if detect_jav_code(original) and detect_jav_code(original) != code:
+            original = name
+        ET.SubElement(root, "originaltitle").text = original
+        ET.SubElement(root, "uniqueid", type="jav", default="true").text = code
+        if movie.get("provider") and movie.get("id"):
+            ET.SubElement(root, "uniqueid", type="MetaTube", default="false").text = f"{movie['provider']}:{movie['id']}"
+        ET.SubElement(root, "mpaa").text = "JP-18+"
+        ET.SubElement(root, "lockdata").text = "true"
+        ET.SubElement(root, "lockedfields").text = "Name|OriginalTitle|SortName|Overview|Cast"
+        for actor in dict.fromkeys(actors or []):
+            if actor:
+                ET.SubElement(ET.SubElement(root, "actor"), "name").text = actor
+        if movie.get("overview"):
+            ET.SubElement(root, "plot").text = movie["overview"]
+        release = movie.get("release_date") or ""
+        if release[:4].isdigit():
+            ET.SubElement(root, "year").text = release[:4]
+            ET.SubElement(root, "premiered").text = release[:10]
+        if movie.get("studio"):
+            ET.SubElement(root, "studio").text = movie["studio"]
+        for genre in movie.get("genres") or []:
+            if isinstance(genre, str) and genre:
+                ET.SubElement(root, "genre").text = genre
+        library_poster = None
+        if poster_path:
+            data = Path(poster_path).read_bytes()
+            if _is_image(data[:16]):
+                # 平铺旧目录不能共用 poster.jpg；标准番号目录则统一一张。
+                library_poster = path.parent / ("poster.jpg" if path.parent.name == code else f"{path.stem}-poster.jpg")
+                if not library_poster.is_file() or library_poster.read_bytes() != data:
+                    _atomic_write(library_poster, data)
+                ET.SubElement(root, "thumb", aspect="poster").text = library_poster.name
+        nfo = path.with_suffix(".nfo")
+        ET.indent(root, space="  ")
+        content = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        _atomic_write(nfo, content)
+        return {"success": True, "nfo_path": str(nfo),
+                "library_poster_path": str(library_poster) if library_poster else ""}
+    except OSError as exc:
+        logger.warning("JAV NFO write failed %s: %s", path, exc)
+        return {"success": False, "reason": "JAV NFO/封面写入失败"}
+
+
+def generate_jav_record_nfo(record, movie: dict | None = None, poster_path: str = "") -> dict:
+    from app.media.jav import jav_code_conflict, resolve_jav_code
+    from app.media.jav_metadata import notification_metadata
+
+    code = resolve_jav_code(record.file_name, record.caption, record.title)
+    if not code:
+        return {"success": False, "reason": "原文件名和说明的番号冲突" if jav_code_conflict(record.file_name, record.caption) else "未识别到番号"}
+    metadata = notification_metadata(record, code, movie)
+    return generate_jav_nfo(record.strm_path, code, metadata.get("jav_title"), metadata.get("actors"), movie, poster_path)
+
+
+def generate_source_record_nfo(record, poster_path: str = "") -> dict:
+    """自定义成人分类使用已核对的原消息信息，不模糊匹配普通电影。"""
+    from app.media.image_downloader import _is_image
+
+    if record.category not in SOURCE_ONLY_CATEGORIES or not record.strm_path or not record.title:
+        return {"success": False, "reason": "无已确认来源标题或 STRM 路径"}
+    path = Path(record.strm_path)
+    try:
+        root = ET.Element("movie")
+        ET.SubElement(root, "title").text = record.title
+        ET.SubElement(root, "sorttitle").text = record.title
+        ET.SubElement(root, "originaltitle").text = record.title
+        ET.SubElement(root, "uniqueid", type="telegram", default="true").text = f"{record.chat_id}:{record.message_id}"
+        ET.SubElement(root, "genre").text = record.category
+        ET.SubElement(root, "mpaa").text = "18+"
+        ET.SubElement(root, "lockdata").text = "true"
+        ET.SubElement(root, "lockedfields").text = "Name|OriginalTitle|SortName|Overview|Cast|Genres"
+        if record.caption:
+            ET.SubElement(root, "plot").text = record.caption
+        if poster_path:
+            poster = Path(poster_path)
+            if poster.parent == path.parent and poster.is_file() and _is_image(poster.read_bytes()[:16]):
+                ET.SubElement(root, "thumb", aspect="poster").text = poster.name
+        nfo = path.with_suffix(".nfo")
+        ET.indent(root, space="  ")
+        _atomic_write(nfo, ET.tostring(root, encoding="utf-8", xml_declaration=True))
+        return {"success": True, "nfo_path": str(nfo), "source_metadata_only": True}
+    except OSError:
+        return {"success": False, "reason": "来源 NFO 写入失败"}
 
 
 def _get_strm_dir(strm_path: str | None) -> Path | None:

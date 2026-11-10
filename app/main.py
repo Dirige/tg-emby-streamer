@@ -77,6 +77,8 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     prefetch_manager.cancel_all()
+    from app.media.emby_versions import stop_version_reconcile
+    await stop_version_reconcile()
     try:
         await _enrich_queue.stop()
     except Exception as e:
@@ -146,7 +148,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
 
             path = request.url.path
-            if path in ("/login", "/favicon.ico", "/health", "/logo.svg", "/logo.png") or path.startswith("/api/health") or path.startswith("/api/auth/"):
+            # Telegram login/logout APIs change stored credentials: panel login is required.
+            if path in ("/login", "/favicon.ico", "/health", "/logo.svg", "/logo.png", "/api/health"):
                 return await call_next(request)
 
             session_token = request.cookies.get("session_token")
@@ -155,7 +158,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 if session_token in _session_tokens:
                     return await call_next(request)
 
-            if path.startswith("/stream/"):
+            if path.startswith(("/stream/", "/strm/")):
                 if settings.web.stream_token:
                     req_token = request.query_params.get("token", "")
                     if req_token == settings.web.stream_token:

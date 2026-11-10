@@ -1,33 +1,70 @@
-# ⚠️ 注意：当前生产环境实际部署方式为 systemd + venv（非 Docker）：
-#   单元: /etc/systemd/system/tg-emby.service
-#   配置: CONFIG_PATH=/home/ubuntu/tg-emby/config/config.yaml
-#   数据: /home/ubuntu/tg-emby/{config,cache,strm}
-# 本文件保留用于可选的容器化部署；若启用 Docker，请按下方路径挂载。
+# 可移植部署。所有数据都在当前目录的 runtime/；不引用作者机器路径。
+# 新安装推荐 bash scripts/install.sh；已有 Emby 可不启用 emby profile。
 services:
-  tg-emby-streamer:
-    image: tg-emby-streamer:local
-    container_name: tg-emby-streamer
+  tgemby:
+    image: ${TGEMBY_IMAGE:-dirige/tgemby:latest}
+    build:
+      context: .
+    user: "${PUID:-1000}:${PGID:-1000}"
+    init: true
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "${TGEMBY_BIND:-0.0.0.0}:${TGEMBY_PORT:-8001}:8001"
     volumes:
-      # 配置文件（必须；路径指向真实配置位置）
-      - /home/ubuntu/tg-emby/config:/app/config
-      - ./config.yaml:/app/config.yaml
-      # 代码（开发阶段挂载，方便热更新）
-      - ./app:/app/app
-      - ./scripts:/app/scripts
-      # 运行时数据（数据库、缓存、STRM 文件）
-      - /home/ubuntu/tg-emby:/app/data-external
-      # 可选：STRM 文件输出到外部目录（如 Emby 媒体库路径）
-      # - /path/to/emby/strm:/app/data/strm
+      - ./runtime/config:/app/config
+      - ./runtime/strm:/app/strm
+      - ./runtime/cache:/app/cache
+      - ./runtime/jav_posters:/app/jav_posters
+      # 离线数据包/媒体导入目录：把分享的 .tar.gz 与 checksums 放进这里再 --import
+      - ./runtime/share:/app/share
     environment:
-      # 所有配置可通过 config.yaml 设置，也可通过环境变量覆盖
-      # 例如：TELEGRAM_API_ID=12345 会覆盖 config.yaml 中的 telegram.api_id
-      - TZ=Asia/Shanghai
-    networks:
-      - tg-emby
+      TZ: ${TZ:-Asia/Shanghai}
+      CONFIG_PATH: /app/config/config.yaml
+      METATUBE_URL: ${METATUBE_URL:-http://metatube:8080}
+      TGEMBY_DEBUG: ${TGEMBY_DEBUG:-}
+      HTTP_PROXY: ${SCRAPER_PROXY:-}
+      HTTPS_PROXY: ${SCRAPER_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1,tgemby,emby,metatube,proxy,host.docker.internal
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      metatube:
+        condition: service_started
 
-networks:
-  tg-emby:
-    driver: bridge
+  metatube:
+    image: ${METATUBE_IMAGE:-ghcr.io/metatube-community/metatube-server:latest}
+    restart: unless-stopped
+    command: ["-dsn", "/config/metatube.db", "-db-auto-migrate"]
+    volumes:
+      - ./runtime/metatube:/config
+    ports:
+      - "${METATUBE_BIND:-127.0.0.1}:${METATUBE_PORT:-8082}:8080"
+    environment:
+      HTTP_PROXY: ${SCRAPER_PROXY:-}
+      HTTPS_PROXY: ${SCRAPER_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1,tgemby,emby,metatube,proxy,host.docker.internal
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+  emby:
+    image: ${EMBY_IMAGE:-lscr.io/linuxserver/emby:latest}
+    profiles: [emby]
+    restart: unless-stopped
+    ports:
+      - "${EMBY_BIND:-0.0.0.0}:${EMBY_PORT:-8096}:8096"
+    volumes:
+      - ./runtime/emby:/config
+      - ./runtime/strm:/media/tg:ro
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Asia/Shanghai}
+
+  proxy:
+    image: ${MIHOMO_IMAGE:-metacubex/mihomo:latest}
+    profiles: [proxy]
+    restart: unless-stopped
+    volumes:
+      - ./runtime/proxy:/root/.config/mihomo
+    ports:
+      - "127.0.0.1:${PROXY_PORT:-7890}:7890"

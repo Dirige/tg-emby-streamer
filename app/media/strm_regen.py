@@ -5,6 +5,7 @@
   重写所有已入库条目的 STRM 文件；
 - 多版本归属：同目录同基础名的多个条目，第一条保留基础名，
   其余条目自动落到 ` - 分辨率` / ` - N` 后缀文件，绝不覆盖其它版本；
+- JAV 始终按原始番号归目录，第一版也使用 `番号 - 版本 来源ID.strm`；
 - 清理不再被任何记录引用的孤儿 STRM 文件。
 
 可由 Web 面板 (/api/media/regen-strm) 或 scripts/regen_strm_all.py 调用。
@@ -23,6 +24,8 @@ from app.media.strm import (
     generate_strm,
     resolution_tag,
 )
+from app.media.jav import resolve_jav_code
+from app.media.nfo_generator import generate_jav_record_nfo
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,7 @@ async def regen_all() -> dict:
             year=r.tmdb_year,
             episode_digits=3 if r.category == "动漫" else 2,
             strm_subdir=subdir_map.get(r.category),
+            file_name=r.file_name, caption=r.caption, chat_id=r.chat_id,
         )
         if base is None:
             stats["errors"] += 1
@@ -73,7 +77,8 @@ async def regen_all() -> dict:
         base_path = Path(base_s)
         # 先移除旧基础名文件（内容是旧 URL，必然变化），让第一条干净重写
         try:
-            if base_path.exists():
+            is_jav = recs[0].category == "18+" and resolve_jav_code(recs[0].file_name, recs[0].caption, recs[0].title)
+            if base_path.exists() and not is_jav:
                 base_path.unlink()
         except OSError:
             pass
@@ -92,6 +97,8 @@ async def regen_all() -> dict:
                     episode_digits=3 if r.category == "动漫" else 2,
                     strm_subdir=subdir_map.get(r.category),
                     resolution=resolution_tag(r.width, r.height),
+                    file_name=r.file_name, caption=r.caption,
+                    overwrite=bool(is_jav),
                 )
             except Exception as e:
                 logger.warning(f"Regen STRM failed record {r.id}: {e}")
@@ -103,6 +110,11 @@ async def regen_all() -> dict:
             final_s = str(strm_path)
             referenced.add(final_s)
             updates.append({"id": r.id, "strm_path": final_s})
+            if is_jav:
+                r.strm_path = final_s
+                nfo = generate_jav_record_nfo(r)
+                if nfo.get("success"):
+                    updates[-1]["nfo_path"] = nfo["nfo_path"]
             if i > 0 and final_s != str(base_path):
                 stats["versioned"] += 1
             stats["regenerated"] += 1

@@ -147,17 +147,13 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
     <div class="form-group">
       <label>分类</label>
       <select class="input" id="ruleCategory">
-        <option value="电视剧">电视剧</option>
-        <option value="电影">电影</option>
-        <option value="动漫">动漫</option>
-        <option value="海外剧">海外剧</option>
-        <option value="18+">18+</option>
+        <option value="">加载分类...</option>
       </select>
     </div>
     <div class="form-group">
       <label>标题提取规则</label>
       <input class="input" id="ruleTitleRule" placeholder="如: line:0">
-      <div class="hint">line:N = caption 第 N 行 | regex:模式 = 正则提取 | 留空=从文件名取</div>
+      <div class="hint">line:N = caption 第 N 行 | regex:模式 = 正则提取 | caption 未匹配时使用下方文件名提取规则</div>
     </div>
     <div class="form-group">
       <label>集数提取规则</label>
@@ -191,6 +187,13 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
     </div>
     <div class="form-group">
       <label class="flex" style="gap:8px;cursor:pointer">
+        <input type="checkbox" id="ruleStrictImport" checked>
+        <span>安全校验（新频道推荐）</span>
+      </label>
+      <div class="hint">未匹配标题/番号、时长未知、番号冲突和未验证的 Part 分段先跳过。所有扫描均过滤不足 5 分钟的视频；旧规则不自动改变。</div>
+    </div>
+    <div class="form-group">
+      <label class="flex" style="gap:8px;cursor:pointer">
         <input type="checkbox" id="ruleEnabled" checked>
         <span>启用此规则</span>
       </label>
@@ -207,12 +210,25 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
   <div class="flex-between mb-16">
     <div class="section-title">媒体库</div>
     <div class="btn-group">
-      <select class="input" id="mediaFilter" style="width:100px" onchange="mediaPage=1;loadMedia()"><option value="">全部</option></select>
-      <select class="input" id="mediaPageSize" style="width:80px" onchange="mediaPage=1;loadMedia()"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select>
+      <select class="input" id="mediaFilter" style="width:100px" onchange="searchMedia()"><option value="">全部</option></select>
+      <select class="input" id="mediaPageSize" style="width:80px" onchange="searchMedia()"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select>
       <button class="btn primary" onclick="loadMedia()">刷新</button>
       <button class="btn warning" onclick="regenStrm()">重新生成STRM</button>
       <button class="btn danger" onclick="deleteBatchMedia()">批量删除</button>
     </div>
+  </div>
+  <div class="card mb-16">
+    <form class="flex" style="flex-wrap:wrap" onsubmit="searchMedia(event)">
+      <select class="input" id="mediaSearchField" style="width:130px" aria-label="搜索范围" onchange="searchMedia()">
+        <option value="title">标题 / 番号</option>
+        <option value="file_name">文件名</option>
+        <option value="channel">频道名称 / ID</option>
+        <option value="all">全部字段</option>
+      </select>
+      <input class="input" id="mediaSearch" type="search" style="flex:1;min-width:200px" placeholder="输入关键词搜索，支持回车" aria-label="搜索媒体" autocomplete="off" oninput="scheduleMediaSearch()">
+      <button class="btn primary" type="submit">搜索</button>
+      <button class="btn" type="button" onclick="clearMediaSearch()">清空</button>
+    </form>
   </div>
   <div class="card"><div id="mediaTable"></div></div>
   <div id="mediaPagination" class="mt-16" style="text-align:center"></div>
@@ -272,7 +288,7 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
   <div class="grid grid-2">
     <div class="card">
       <h3>TMDB API</h3>
-      <div class="form-group"><label>API Key</label><input class="input" id="s_tmdb_key" placeholder="08b9ec307e11460091ce04008ae36ba6"></div>
+      <div class="form-group"><label>API Key</label><input class="input" id="s_tmdb_key" placeholder="请填写你自己的 TMDB API Key"></div>
       <div class="form-group"><label>API 地址（反代）</label><input class="input" id="s_tmdb_api" placeholder="https://tmdb.255432.xyz/api/3"></div>
       <div class="form-group"><label>图片地址（反代）</label><input class="input" id="s_tmdb_img" placeholder="https://tmdb.255432.xyz/t/p"></div>
       <div class="hint">使用反代地址可避免 TMDB 被墙</div>
@@ -463,6 +479,7 @@ code{background:rgba(99,102,241,.08);padding:2px 6px;border-radius:4px;font-size
 const API = '';
 let mediaData = [];
 let mediaPage = 1, mediaTotal = 0;
+let mediaSearchTimer = null, mediaRequestId = 0;
 let unrecPage = 1, unrecTotal = 0;
 
 function switchTab(page) {
@@ -553,6 +570,7 @@ async function loadTelegram() {
   allChannelRules = rulesR?.rules || [];
   renderGroupedChannels(allChannelRules);
   renderCategories(catsR?.categories || []);
+  if (catsR?.categories) await populateCategoryFilters(catsR.categories);
   populateScanDropdown();
 }
 
@@ -577,12 +595,13 @@ function renderGroupedChannels(rules) {
       <div class="flex-between mb-8">
         <h3 style="margin:0;font-size:14px;"><span class="badge ${catColors[cat]||'blue'}" style="font-size:12px">${esc(cat)}</span> <span style="color:var(--text2);font-size:12px">${items.length} 个频道</span></h3>
       </div>
-      <table style="width:100%"><tr><th>频道名称</th><th>ID</th><th>标题规则</th><th>集数规则</th><th>状态</th><th>操作</th></tr>
+      <table style="width:100%"><tr><th>频道名称</th><th>ID</th><th>资源数</th><th>标题规则</th><th>集数规则</th><th>状态</th><th>操作</th></tr>
       ${items.map(r => {
         const safeId = esc(r.channel_id);
         const name = r.channel_name || r.channel_id;
         return `<tr>
           <td>${esc(name)}</td><td><code>${safeId}</code></td>
+          <td><span class="badge ${r.media_count ? 'blue' : 'gray'}" style="font-size:12px">${r.media_count ?? 0}</span></td>
           <td><code style="font-size:11px">${esc(r.title_rule||'-')}</code></td>
           <td><code style="font-size:11px">${esc(r.episode_rule||'-')}</code></td>
           <td>${r.enabled ? '<span class="badge green">启用</span>' : '<span class="badge gray">禁用</span>'}</td>
@@ -628,7 +647,8 @@ function renderCategories(categories) {
     </tr>`).join('')}</table>`;
 }
 
-function showAddChannelModal() {
+async function showAddChannelModal() {
+  if (!await populateCategoryFilters()) return;
   document.getElementById('ruleModalTitle').textContent = '添加频道';
   document.getElementById('ruleChannelId').value = '';
   document.getElementById('ruleChannelName').value = '';
@@ -641,10 +661,12 @@ function showAddChannelModal() {
   document.getElementById('ruleFilenameRule').value = '';
   document.getElementById('ruleFilenameTemplate').value = '';
   document.getElementById('ruleEnabled').checked = true;
+  document.getElementById('ruleStrictImport').checked = true;
   openModal('ruleModal');
 }
 
 async function openRuleEditor(channelId) {
+  if (!await populateCategoryFilters()) return;
   document.getElementById('ruleModalTitle').textContent = '编辑解析规则';
   document.getElementById('ruleChannelId').value = channelId;
   document.getElementById('ruleChannelName').value = '';
@@ -657,11 +679,12 @@ async function openRuleEditor(channelId) {
   document.getElementById('ruleFilenameRule').value = '';
   document.getElementById('ruleFilenameTemplate').value = '';
   document.getElementById('ruleEnabled').checked = true;
+  document.getElementById('ruleStrictImport').checked = true;
   const r = await api('/api/channel-rule?channel_id=' + encodeURIComponent(channelId));
   if (r?.rule) {
     const rl = r.rule;
     document.getElementById('ruleChannelName').value = rl.channel_name || '';
-    document.getElementById('ruleCategory').value = rl.category || '电视剧';
+    selectCategoryValue('ruleCategory', rl.category || '电视剧');
     document.getElementById('ruleTitleRule').value = rl.title_rule || '';
     document.getElementById('ruleEpisodeRule').value = rl.episode_rule || '';
     document.getElementById('ruleSeason').value = rl.season != null ? rl.season : '';
@@ -670,6 +693,7 @@ async function openRuleEditor(channelId) {
     document.getElementById('ruleFilenameRule').value = rl.filename_rule || '';
     document.getElementById('ruleFilenameTemplate').value = rl.filename_template || '';
     document.getElementById('ruleEnabled').checked = rl.enabled !== false;
+    document.getElementById('ruleStrictImport').checked = rl.strict_import === true;
   }
   openModal('ruleModal');
 }
@@ -687,6 +711,7 @@ async function saveRule() {
     filename_rule: document.getElementById('ruleFilenameRule').value,
     filename_template: document.getElementById('ruleFilenameTemplate').value,
     enabled: document.getElementById('ruleEnabled').checked,
+    strict_import: document.getElementById('ruleStrictImport').checked,
   };
   const r = await apiPost('/api/channel-rule/save', body);
   if (r?.success) { toast('规则已保存', 'success'); closeModal('ruleModal'); loadTelegram(); }
@@ -731,43 +756,78 @@ async function saveCategory() {
   };
   if (!body.name) { toast('请输入分类名称', 'error'); return; }
   const r = await apiPost('/api/category/save', body);
-  if (r?.success) { toast('分类已保存', 'success'); closeModal('categoryModal'); loadTelegram(); }
+  if (r?.success) { toast('分类已保存', 'success'); closeModal('categoryModal'); await loadTelegram(); }
   else toast(r?.message || '保存失败', 'error');
 }
 
 async function deleteCategory(id) {
   if (!confirm('确定删除此分类？（不会删除频道）')) return;
   const r = await apiDelete('/api/category/' + id);
-  if (r?.success) { toast('分类已删除', 'success'); loadTelegram(); }
+  if (r?.success) { toast('分类已删除', 'success'); await loadTelegram(); }
   else toast(r?.message || '删除失败', 'error');
 }
 
 // ========== Media ==========
-async function populateCategoryFilters() {
-  const r = await api('/api/categories');
-  const cats = r?.categories || [];
-  const hardcoded = ['电视剧', '电影', '动漫', '海外剧', '18+'];
-  const allCats = [...new Set([...hardcoded, ...cats.map(c => c.name)])];
-  // Media filter
-  const filter = document.getElementById('mediaFilter');
-  if (filter) {
-    const current = filter.value;
-    filter.innerHTML = '<option value="">全部</option>' + allCats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
-    if (current) filter.value = current;
+function selectCategoryValue(id, value) {
+  const select = document.getElementById(id);
+  if (!select) return;
+  if (value && ![...select.options].some(option => option.value === value)) {
+    select.add(new Option(value, value));
   }
-  // Media edit category
-  const editCat = document.getElementById('mediaEditCategory');
-  if (editCat) {
-    editCat.innerHTML = allCats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  select.value = value;
+}
+
+async function populateCategoryFilters(categories) {
+  const cats = categories === undefined ? (await api('/api/categories'))?.categories : categories;
+  if (!Array.isArray(cats)) { toast('分类加载失败，请刷新重试', 'error'); return null; }
+  const hardcoded = ['电视剧', '电影', '动漫', '海外剧', '18+'];
+  const allCats = [...new Set([...hardcoded, ...cats.map(c => c.name).filter(Boolean)])];
+  for (const id of ['ruleCategory', 'mediaFilter', 'mediaEditCategory']) {
+    const select = document.getElementById(id);
+    if (!select) continue;
+    const current = select.value;
+    const options = allCats.map(name => new Option(name, name));
+    if (current && !allCats.includes(current)) options.push(new Option(current, current));
+    if (id === 'mediaFilter') options.unshift(new Option('全部', ''));
+    select.replaceChildren(...options);
+    if (current || id === 'mediaFilter') select.value = current;
   }
   return cats;
 }
 
+function scheduleMediaSearch() {
+  clearTimeout(mediaSearchTimer);
+  mediaPage = 1;
+  mediaRequestId++;
+  document.getElementById('mediaTable').innerHTML = '<div class="empty">加载中...</div>';
+  document.getElementById('mediaPagination').innerHTML = '';
+  mediaSearchTimer = setTimeout(loadMedia, 300);
+}
+
+function searchMedia(event) {
+  event?.preventDefault();
+  mediaPage = 1;
+  return loadMedia();
+}
+
+function clearMediaSearch() {
+  document.getElementById('mediaSearch').value = '';
+  return searchMedia();
+}
+
 async function loadMedia() {
+  clearTimeout(mediaSearchTimer);
+  const requestId = ++mediaRequestId;
   const pageSize = document.getElementById('mediaPageSize')?.value || 20;
   const category = document.getElementById('mediaFilter')?.value || '';
-  const r = await api(`/api/media?page=${mediaPage}&page_size=${pageSize}&category=${category}`);
-  if (!r) return;
+  const search = document.getElementById('mediaSearch')?.value.trim() || '';
+  const searchField = document.getElementById('mediaSearchField')?.value || 'title';
+  const params = new URLSearchParams({page: mediaPage, page_size: pageSize, category, search, search_field: searchField});
+  document.getElementById('mediaTable').innerHTML = '<div class="empty">加载中...</div>';
+  document.getElementById('mediaPagination').innerHTML = '';
+  const r = await api('/api/media?' + params.toString());
+  if (requestId !== mediaRequestId) return;
+  if (!r) { document.getElementById('mediaTable').innerHTML = '<div class="empty">加载失败，请刷新重试</div>'; return; }
   mediaData = r.items || [];
   mediaTotal = r.total || 0;
   renderMedia(mediaData);
@@ -775,7 +835,11 @@ async function loadMedia() {
 }
 
 function renderMedia(items) {
-  if (!items.length) { document.getElementById('mediaTable').innerHTML = '<div class="empty">暂无媒体记录</div>'; return; }
+  if (!items.length) {
+    const filtered = document.getElementById('mediaSearch')?.value.trim() || document.getElementById('mediaFilter')?.value;
+    document.getElementById('mediaTable').innerHTML = `<div class="empty">${filtered ? '没有找到匹配的媒体，请调整关键词或分类' : '暂无媒体记录'}</div>`;
+    return;
+  }
   document.getElementById('mediaTable').innerHTML = `<table><tr><th><input type="checkbox" id="mediaSelectAll" onchange="toggleSelectAllMedia(this)"></th><th>标题</th><th>分类</th><th>频道</th><th>原消息</th><th>STRM</th><th>操作</th></tr>
     ${items.map(m => {
       const title = m.title || m.file_name || '-';
@@ -829,12 +893,13 @@ function getSelectedMediaIds() {
 
 // ========== Media Edit ==========
 async function openMediaEdit(id) {
+  if (!await populateCategoryFilters()) return;
   const r = await api('/api/media/' + id);
   if (!r?.item) { toast('获取媒体信息失败', 'error'); return; }
   const item = r.item;
   document.getElementById('mediaEditId').value = item.id;
   document.getElementById('mediaEditTitle').value = item.title || item.file_name || '';
-  document.getElementById('mediaEditCategory').value = item.category || '电视剧';
+  selectCategoryValue('mediaEditCategory', item.category || '电视剧');
   document.getElementById('mediaEditLink').value = item.source_link || '';
   openModal('mediaEditModal');
 }

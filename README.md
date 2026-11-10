@@ -25,8 +25,8 @@ Telegram 频道视频自动入库工具，通过 Pyrogram 连接 Telegram，监�
 
 ```
 tgemby/
-├── config.yaml              # 主配置文件（支持环境变量覆盖）
-├── docker-compose.yml       # Docker Compose 一键部署（可选；生产为 systemd + venv）
+├── config.example.yaml      # 无凭据配置模板（实际配置在 runtime/config/）
+├── docker-compose.yml       # Docker Compose 一键部署
 ├── Dockerfile               # Docker 镜像构建
 ├── requirements.txt         # Python 依赖（锁定生产版本）
 ├── pytest.ini               # 测试配置
@@ -67,7 +67,15 @@ tgemby/
 │       └── index.html       # 管理面板 SPA（纯 HTML/CSS/JS）
 │
 ├── scripts/                 # 工具脚本
-│   ├── generate_session.py  # 生成 Telegram Session String
+│   ├── generate_session.py  # 交互式登录 Telegram（凭据自动写入 config.yaml）
+│   ├── install.sh           # Docker 一键安装（详见 DEPLOY.md）
+│   ├── deploy.py            # 容器初始化/访问地址/代理设置（bootstrap, seturl, proxy）
+│   ├── library_bundle.py    # 媒体数据包 export / import / channels（脱敏分享）
+│   ├── emby_portable.py     # 从 Emby 只读提取刮削资料转为便携 NFO
+│   ├── upload_tg.py         # 通过 Telegram 发送大文件/数据包
+│   ├── install_metatube.py  # 下载并核对官方 Emby 版 MetaTube 插件
+│   ├── check_release.py     # 干净源码打包与凭据检查
+│   ├── publish.sh           # 双架构镜像构建与发布
 │   ├── regen_strm_all.py    # 全量重生成 STRM（URL 格式升级后运行）
 │   ├── init_all.py          # 初始化所有频道规则
 │   ├── init_rules.py        # 初始化规则模板
@@ -78,158 +86,76 @@ tgemby/
 │   └── extract_samples.py   # 提取样本用于调试
 │
 ├── tests/                   # pytest 单元测试
-├── samples/                 # 频道消息样本（用于调试解析规则）
-├── data/                    # 运行时数据（自动生成）
-│   ├── media.db             # SQLite 主数据库
-│   ├── scan_state.json      # 扫描断点记录
-│   ├── cache/               # 视频分块缓存
-│   └── strm/                # STRM 文件输出目录
-└── media/                   # 其他媒体资源目录
+├── DEPLOY.md                # 接收者完整部署教程
+├── DATA_SHARE.md            # 作者导出/私下分享/镜像发布说明
+├── CHANNELS.md              # 频道加入链接及原规则状态
+└── runtime/                 # Docker 运行数据（不进入源码包/镜像）
+    ├── config/              # 私密配置、随机密码、媒体数据库
+    ├── cache/               # 视频分块缓存
+    ├── strm/                # STRM、NFO、本地图片
+    ├── jav_posters/         # 通知封面
+    ├── metatube/            # MetaTube 数据库
+    ├── emby/                # 可选独立 Emby 的配置/账户
+    └── proxy/               # 可选私密代理配置
 ```
 
 ---
 
 ## 快速开始 — Docker 一键部署
 
+> 📘 **完整中文教程见 [DEPLOY.md](DEPLOY.md)**，包含完整命令、国内代理、MetaTube 插件、媒体包导入和 Emby 设置。
+> 镜像发布目标：`docker.io/dirige/tgemby`（linux/amd64 + linux/arm64）。镜像不可拉取时脚本自动从随包源码构建；本地构建不代表已经上传 Docker Hub。
+
 ### 前置条件
 
-- **Docker** & **Docker Compose**（V2 及以上）
+- **Docker** & **Docker Compose**（V2 及以上）、Python 3
 - **Telegram API 凭据** — 前往 https://my.telegram.org 注册应用获取 `api_id` 和 `api_hash`
 - **一个 Telegram 账号**（用于登录并监控频道）
+- 同机已有 Emby 则无需重复搭建；没有也可以用本仓库自带的 Emby 容器 profile
 
-### 第 1 步：下载部署文件
+### 第 1 步：获取项目
 
-```bash
-mkdir tg-emby-streamer && cd tg-emby-streamer
-
-# 下载 docker-compose.yml
-wget -O docker-compose.yml https://raw.githubusercontent.com/dirige/tg-emby-streamer/main/docker-compose.yml
-
-# 下载配置模板
-wget -O config.example.yaml https://raw.githubusercontent.com/dirige/tg-emby-streamer/main/config.example.yaml
-
-# 创建实际配置文件
-cp config.example.yaml config.yaml
-```
-
-### 第 2 步：编辑配置文件 `config.yaml`
-
-```yaml
-# ============================================
-# TG-Emby-Streamer 配置文件
-# ============================================
-
-telegram:
-  # Telegram API 凭据，从 https://my.telegram.org 获取
-  api_id: 12345
-  api_hash: "your_api_hash_here"
-
-  # Telegram 账号手机号（用于首次生成 Session String）
-  phone: "+8612345678901"
-
-  # Session String（首次运行前需通过脚本生成，填入后优先于 phone 登录）
-  session_string: ""
-
-  # 要监控的频道 ID，逗号分隔多个
-  # 如何获取频道 ID：将频道消息转发到 @getidsbot 或 @userinfobot
-  monitor_channels: "-1001668687022,-1002855500786"
-
-proxy:
-  # 是否启用代理（中国大陆等 Telegram 封锁地区必须开启）
-  enabled: false
-  scheme: socks5           # socks5 或 http
-  host: 127.0.0.1
-  port: 10808
-
-server:
-  # Web 服务监听地址
-  host: 0.0.0.0
-  port: 8001
-
-  # 外部访问地址 — STRM 文件中会写入此地址作为流 URL
-  # 如果通过反向代理或公网访问，请填写对应的域名
-  base_url: "http://your-domain.com:8001"
-
-  # 内部访问地址 — Docker 容器内或内网访问时使用的地址
-  local_url: "http://192.168.1.100:8001"
-
-  # 流媒体访问 Token（非空时，访问 /stream/* 需携带 ?token=xxx）
-  # 用于防止 STRM 文件被泄露后任意播放
-  stream_token: ""
-
-storage:
-  # 数据存储根目录（数据库、缓存、下载文件）
-  data_dir: /app/data
-
-  # STRM 文件输出目录 —— 将此目录挂载/映射到 Emby 媒体库
-  strm_dir: /app/data/strm
-
-  # 视频分块缓存目录
-  cache_dir: /app/data/cache
-
-  # 内存缓存大小（MB）
-  memory_cache_size_mb: 256
-
-  # 磁盘缓存上限（GB）
-  disk_cache_max_gb: 50
-
-database:
-  # 数据库连接 URL（默认 SQLite）
-  url: "sqlite+aiosqlite:////app/data/media.db"
-
-auth:
-  # Web 管理面板登录凭据
-  username: admin
-  password: "your_password"
-
-notify:
-  # 入库完成后是否发送 Telegram 通知
-  enabled: false
-  # 接收通知的 Telegram 用户 ID（数字，可在 @userinfobot 获取）
-  target: "@username"
-```
-
-### 第 3 步：生成 Telegram Session String
-
-首次使用需要生成 Session String（登录凭证），避免每次重启需要输入验证码：
+拿到私下分享的干净源码包，直接解压：
 
 ```bash
-# 方式一：使用 Docker 临时运行
-docker run --rm -it \
-  -v ./config.yaml:/app/config.yaml \
-  ghcr.io/dirige/tg-emby-streamer:main \
-  python3 scripts/generate_session.py
-
-# 方式二：本地运行（需要 Python 3.12+）
-pip install -r requirements.txt
-python3 scripts/generate_session.py
-
-# 按照提示输入验证码（如果账号开启了两步验证还需输入密码）
-# 生成的 session_string 填入 config.yaml 的 telegram.session_string
+tar -xzf tgemby-source.tar.gz
+cd tgemby
 ```
 
-### 第 4 步：一键启动
+维护者发布更新后，也可从 <https://github.com/Dirige/tg-emby-streamer> 获取。
+
+### 第 2 步：一键安装
 
 ```bash
-docker compose up -d
+bash scripts/install.sh --url http://192.168.1.20:8001 --skip-login
 ```
 
-查看启动日志：
+将示例 IP 改成你的服务器地址，必须能被 Emby 和播放设备访问。脚本会生成独立密码/Token、初始化原频道规则、启动 TGEmby/MetaTube；默认还启动独立 Emby 并安装官方 MetaTube 插件。已有 Emby 请在首次安装前把 `.env` 的 `COMPOSE_PROFILES` 留空。
+
+先跳过登录，避免自动监控在媒体包导入前写入数据。国内先按教程分别设置 Telegram 与 HTTP 刮削代理。
+
+### 第 3 步：导入媒体数据包（可选，必须是空库）
+
+数据包含媒体数据库、STRM、已刮削 NFO/本地图片、通知封面及频道状态，不含作者的账户凭据、视频缓存或 Emby 用户/观看记录。收到分卷先按 [DATA_SHARE.md](DATA_SHARE.md) 合并并校验，然后：
 
 ```bash
-docker logs -f tg-emby-streamer
+bash scripts/install.sh --import /你保存数据包的目录/tgemby-library.tar.gz
 ```
 
-### 第 5 步：登录管理面板
+### 第 4 步：关注来源频道，登录自己的 Telegram
 
-打开浏览器访问 **http://your-server-ip:8001**，使用 `config.yaml` 中配置的 `auth.username` 和 `auth.password` 登录。
+打开 [CHANNELS.md](CHANNELS.md)，用你自己的 Telegram 账号加入需要的来源频道，再登录：
 
-### 第 6 步：配置频道规则
+```bash
+bash scripts/install.sh --login
+```
 
-在管理面板中：
-1. 进入 **频道规则** 页面
-2. 为每个频道添加解析规则（标题规则、集数规则、分类等）
-3. 点击 **扫描** 按钮执行首次入库
+19 条规则及原启用/停用状态全部保留，不是全部启用；私有频道需要管理员邀请，数据包不能绕过权限。
+
+### 第 5 步：设置面板与 Emby
+
+浏览器访问 `http://服务器IP:8001`，使用 `runtime/config/access.txt` 内的账号密码登录；
+在 Emby 添加 `/media/tg/分类名`，启用 NFO 与本地图片，扫描媒体库。已导入媒体包不需要全量重新扫描 Telegram 或替换全部元数据；只让自动监控同步新增消息即可。
 
 ---
 
@@ -249,6 +175,8 @@ docker logs -f tg-emby-streamer
 | `PROXY_SCHEME` | `proxy.scheme` | 代理协议（socks5/http） |
 | `PROXY_HOST` | `proxy.host` | 代理主机 |
 | `PROXY_PORT` | `proxy.port` | 代理端口 |
+| `PROXY_USERNAME` | `proxy.username` | 代理用户名（可选） |
+| `PROXY_PASSWORD` | `proxy.password` | 代理密码（可选） |
 | `STREAM_HOST` | `server.host` | 监听地址 |
 | `STREAM_PORT` | `server.port` | 监听端口 |
 | `BASE_URL` | `server.base_url` | 外部访问地址 |
@@ -265,15 +193,7 @@ docker logs -f tg-emby-streamer
 | `NOTIFY_ENABLED` | `notify.enabled` | 启用通知 |
 | `NOTIFY_TARGET` | `notify.target` | 通知接收者 |
 
-使用 `.env` 文件配合 Docker Compose 自动加载：
-
-```bash
-# .env 文件位于 docker-compose.yml 同目录时会被自动加载
-echo "TELEGRAM_API_ID=12345" >> .env
-echo "TELEGRAM_API_HASH=abc123" >> .env
-# ... 其他配置
-docker compose up -d
-```
+本套 Compose 的 `.env` 主要控制端口、镜像、UID/profile 和 `SCRAPER_PROXY`，**不会把任意 `.env` 变量自动传进容器**。Telegram 凭据通过交互登录保存在 `runtime/config/config.yaml`；高级环境覆盖须在服务的 `environment:` 或部署平台中明确传入，不要把真实 Key 写进命令历史或公开配置。
 
 ---
 
@@ -421,7 +341,7 @@ season: 1
 
 ## STRM 文件结构
 
-STRM 文件是纯文本文件，内容为视频流的 URL 地址（如 `http://server:8001/stream/12345`），Emby/Jellyfin 读取后直接播放该 URL，无需下载原文件到本地。
+STRM 文件是纯文本文件，内容为视频流的 URL 地址（如 `http://server:8001/stream/-1001234567890/5734`），Emby/Jellyfin 读取后播放该 URL，无需先下载完整视频。路由同时使用频道和消息 ID，避免跨频道消息串源。
 
 系统按分类自动组织目录结构：
 
@@ -457,19 +377,24 @@ strm/                                    # STRM 输出根目录（映射到 Emby
 │   │       └── ...
 │
 └── 18+/                                 # 成人内容
-    └── ...
+    └── ABF-002/                         # 始终按番号归档，演员/文件名不影响分组
+        ├── ABF-002 - 1080p TG-100111-m10.strm
+        ├── ABF-002 - 720p 中文字幕 TG-100222-m20.strm
+        ├── ABF-002 - 1080p TG-100111-m10.nfo
+        ├── ABF-002 - 720p 中文字幕 TG-100222-m20.nfo
+        └── poster.jpg                   # 同番号共用库封面（推送缓存仍独立）
 ```
 
 **STRM 文件内容示例**：
 
 ```
-http://192.168.1.100:8001/stream/5734
+http://192.168.1.100:8001/stream/-1001234567890/5734
 ```
 
 如果配置了 `stream_token`，则为：
 
 ```
-http://your-domain.com:8001/stream/5734?token=your_secure_token
+https://your-domain.example/stream/-1001234567890/5734?token=your_own_token
 ```
 
 ---
@@ -486,42 +411,69 @@ http://your-domain.com:8001/stream/5734?token=your_secure_token
 **电影库设置**：
 - 内容类型：`电影`
 - 文件夹：选择 `/path/to/strm/电影/`
-- 元数据下载器：推荐安装 **MetaTube** 插件
+- 元数据下载器：普通电影使用 TMDB；已有 NFO/图片优先读取本地资料
 
 **剧集库设置**：
 - 内容类型：`电视剧`
 - 文件夹：选择 `/path/to/strm/电视剧/`、`/path/to/strm/动漫/`、`/path/to/strm/海外剧/`
-- 元数据下载器：推荐安装 **MetaTube** 插件
+- 元数据下载器：普通剧集使用 TMDB；已有 NFO/图片优先读取本地资料
 
 **18+ 内容**（可选）：
 - 可单独作为一个媒体库，设置访问权限限制
+- 内容类型设为 **电影**。同番号不同来源/分辨率在 Emby 中是一部电影、一个封面，详情页可选版本；TG-Emby 的数据库仍保留每个来源消息，不能按番号删除来源记录。
+- 新 STRM 全部使用 `18+/{番号}/{番号} - {版本标签} {来源ID}.strm`，第一版也带版本后缀。入库前先检查 `(chat_id, message_id)`，唯一索引占位成功后才写文件，避免重复扫描留下多余 STRM。
+- JAV 的每版 NFO 都写入来源番号并锁定身份字段，MetaTube 搜索及详情必须精确同号；缺少匹配时不沿用另一部电影的标题/ProviderId/图片。
+- 入库后的 Emby 库扫描完成后，后台仅核对本次新增番号，把仍分散在旧目录的版本合到一个电影卡片中；不移动源文件，不按相同海报或刮削标题合并。
+- 文件名和原说明的番号冲突时不自动改号、合并；新记录放在 `未确认番号/` 的独立来源目录中等待核实。
 - TG 推送的 JAV 封面和字段走 MetaTube，不依赖 TMDB API Key。
-- MetaTube 服务默认 `http://127.0.0.1:8082`，可用 `METATUBE_URL` 环境变量调整。
+- MetaTube 服务在 compose 内固定为 `http://metatube:8080`（容器互通）；宿主机访问端口看 `.env` 的 `METATUBE_PORT`，默认 8082。国内访问刮削源的代理配置见 `DEPLOY.md`。
 - 推送封面按番号缓存在 `storage.cache_dir` 同级的 `jav_posters/`，与 Emby 的 STRM 海报隔离，避免共用图片或被插件覆盖。
 - 通知格式：`刮削完成`、`📛 番号`、`🎬 标题`、`👤 演员`、`🔗 来源群组`。优先使用原消息中的中文片名/演员，缺失时取对应番号的 NFO / MetaTube；缺图明确提示，不挪用其他番号的图片。
 - 补图脚本 `scripts/backfill_18plus_posters.py --media-id <ID>` 仅处理指定记录且不发送通知；请用与 systemd 服务相同的账号运行，避免生成 root 所有的目录。
+
+### 既有 JAV 库的安全修复
+
+`scripts/repair_jav_library.py` 默认只审计：通过原始 Telegram 来源识别番号，而不是相信 Emby 片名或 MetaTube ProviderId。来源不明、冲突、尚未完成索引的条目不会被强行合并。
+
+```bash
+# 只审计，--code 可重复；省略时审计整个 JAV 库
+CONFIG_PATH=/path/to/config.yaml ./venv/bin/python scripts/repair_jav_library.py \
+  --output-dir /path/to/private-audit --code ABF-002
+
+# 确认并备份后才执行；--fix-numbering 仅处理查实的串号，不重刮正确电影
+CONFIG_PATH=/path/to/config.yaml ./venv/bin/python scripts/repair_jav_library.py \
+  --output-dir /path/to/private-repair --backup-dir /path/to/private-backup \
+  --merge --fix-numbering
+```
+
+- 写入前备份 TG `media.db`、Emby `library.db`/用户数据、STRM/NFO/海报及服务器元数据。脚本要求备份目录中存在 `tg-media.db`、`emby-library.db`、`strm-18plus.tar.gz`、`emby-metadata.tar.gz`；含流地址和鉴权信息的备份不要公开。
+- 默认 Emby 文件映射前缀为 `/media/tg`，其他挂载路径使用 `--emby-path-prefix`。
+- 合并后通过电影详情的完整 `MediaSources` 核对所有来源，再验证用户界面只剩一个电影卡片；保留收藏/已看/播放位置。普通列表 API 只返回默认来源，不能用它判断版本丢失。
+- 超过 8 个版本也逐一核对，不截断或删源；上游未匹配的串号条目宁可缺图，也不保留错封面。
+- 不检索 Telegram，不向群组发消息，不发送入库通知，也不调用全库重新刮削。
 
 ### Docker 部署建议
 
 如果 Emby 和 TG-Emby-Streamer 在同一台机器上运行，建议共享 STRM 目录：
 
 ```yaml
-# docker-compose.yml 中 tg-emby-streamer 的 volumes
+# 本套 Compose 已有的 TGEmby 挂载
 volumes:
-  - ./data/strm:/app/data/strm        # STRM 输出
-  - ./data/cache:/app/data/cache      # 视频缓存（可选共享）
+  - ./runtime/strm:/app/strm
+  - ./runtime/cache:/app/cache
 
 # 在 Emby 容器中也挂载同一目录
 # emby:
 #   volumes:
-#     - ./data/strm:/media/telegram   # TG STRM 目录映射到 Emby 媒体库路径
+#     - ./runtime/strm:/media/tg:ro
 ```
 
 ### 元数据刮削建议
 
-- **MetaTube 插件**：专为中文 PT/BT 环境设计的刮削插件，支持 TMDB，强烈推荐
+- **MetaTube 插件**：主要用于 JAV 番号元数据；Emby 必须安装官方 Emby 版，不要使用 Jellyfin 版 DLL
   - GitHub：https://github.com/metatube-community/jellyfin-plugin-metatube
-- **TMDB 刮削器**：系统默认，适合英文内容
+- **TMDB 刮削器**：适合普通电影和电视剧，支持中文资料
+- MetaTube 插件 Server 为 `http://metatube:8080`（不加 `/v1`），默认 Token 留空；国内代理详见 [DEPLOY.md](DEPLOY.md)。
 
 ### 播放说明
 
@@ -565,16 +517,11 @@ Telegram 客户端需要先获取对话列表缓存。解决方案：
 
 ### Q：如何更新配置？
 
-直接编辑 `config.yaml` 后执行 `docker compose restart tg-emby-streamer`。或者通过 Web 面板的 **系统设置** 页面在线上修改（部分配置修改后自动生效）。
+Docker 部署编辑私密 `runtime/config/config.yaml` 后执行 `docker compose restart tgemby`，或者使用 Web 面板的 **系统设置**。换 IP/域名用 `bash scripts/install.sh --set-url https://你的域名`，它会同步现有 STRM。
 
 ### Q：如何清理缓存？
 
-Web 面板 → **缓存管理** → **清空缓存**。或者直接执行：
-
-```bash
-rm -rf ./data/cache/*
-docker compose restart tg-emby-streamer
-```
+Web 面板 → **缓存管理** → **清空缓存**。不要删除 `runtime/strm`、`runtime/config` 或通知封面目录。
 
 ### Q：支持 Telegram 群组吗？
 
@@ -582,7 +529,7 @@ docker compose restart tg-emby-streamer
 
 ### Q：视频流 URL 泄露了怎么办？
 
-在 `config.yaml` 中设置 `stream_token` 为随机字符串，然后重新生成 STRM 文件（Web 面板 → STRM 管理 → 重新生成）。旧 STRM 文件中的 URL 将失效。
+执行 `bash scripts/install.sh --rotate-token`，替换你自己的播放 Token、更新 STRM 并重启服务。它不会重命名来源或重新刮削；旧链接随后失效。
 
 ### Q：扫描时提示 "NEED_LOGIN"
 

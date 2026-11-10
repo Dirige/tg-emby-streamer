@@ -16,10 +16,12 @@ from app.config import settings
 from app.database import async_session
 from app.models import Media, Category
 from app.media.parser import parse_media_info
-from app.media.jav import detect_jav_code, _JAV_PATTERNS
+from app.media.jav import detect_jav_code, resolve_jav_code, _JAV_PATTERNS
 from app.media.strm import generate_strm
+from app.media.nfo_generator import generate_jav_record_nfo
 from app.telegram import jav_fetcher
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -193,18 +195,7 @@ async def _save_video(
 ) -> Optional[str]:
     from app.media.strm import resolution_tag
 
-    strm_path = generate_strm(
-        message_id=v.message_id,
-        chat_id=str(v.chat_id),
-        category=category,
-        title=v.title,
-        season=v.season,
-        episode=v.episode,
-        year=v.year,
-        episode_digits=episode_digits,
-        strm_subdir=category,
-        resolution=resolution_tag(v.width, v.height),
-    )
+    strm_path = None
     result: Optional[str] = None
     async with async_session() as session:
         # 同一条消息（同频道同 message_id）不允许重复入库
@@ -235,11 +226,30 @@ async def _save_video(
         )
         session.add(record)
         try:
+            # 先由唯一索引占位，再写文件；重复消息不能留下多余 STRM。
             await session.flush()
             mid = record.id
+            strm_path = generate_strm(
+                message_id=v.message_id, chat_id=str(v.chat_id), category=category,
+                title=v.title, season=v.season, episode=v.episode, year=v.year,
+                episode_digits=episode_digits, strm_subdir=category,
+                resolution=resolution_tag(v.width, v.height), file_name=v.file_name, caption=v.caption,
+            )
+            if strm_path is None:
+                raise OSError("STRM 生成失败")
+            record.strm_path = str(strm_path)
+            if category == "18+" and resolve_jav_code(v.file_name, v.caption, v.title):
+                nfo = generate_jav_record_nfo(record)
+                if not nfo.get("success"):
+                    raise OSError(nfo.get("reason"))
+                record.nfo_path = nfo["nfo_path"]
             await session.commit()
-        except Exception:
+        except IntegrityError:
             await session.rollback()
+            return None
+        except Exception as exc:
+            await session.rollback()
+            logger.warning("入库失败 chat=%s msg=%s: %s", v.chat_id, v.message_id, exc)
             return None
         if settings.enrich.enabled:
             from app.media.enrich_queue import enrich_queue
@@ -251,6 +261,10 @@ async def _save_video(
                     "category": category,
                 })
         result = str(strm_path) if strm_path else None
+    if not settings.enrich.enabled and settings.emby.url and settings.emby.api_key:
+        from app.media.emby_notifier import refresh_library
+        code = resolve_jav_code(v.file_name, v.caption, v.title) if category == "18+" else None
+        asyncio.create_task(refresh_library(jav_codes=[code] if code else []))
     return result
 
 

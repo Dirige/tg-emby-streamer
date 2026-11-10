@@ -18,6 +18,9 @@ strm/
 # 真实配置与敏感信息（勿提交，请使用 config.example.yaml）
 config/
 config.yaml
+.env
+.env.*
+!.env.example
 *.session
 *.session-journal
 
@@ -27,6 +30,11 @@ config.yaml
 *.tar.gz
 dist/
 build/
+runtime/
+jav_posters/
+private-share/
+*.part[0-9]*
+*credentials*
 
 # 系统 / 编辑器
 Thumbs.db

@@ -1,8 +1,11 @@
 import os
 import logging
 import re
+import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 from app.config import settings
+from app.media.jav import jav_code_conflict, resolve_jav_code
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -22,6 +25,19 @@ def build_stream_url(chat_id: str | int | None, message_id: int) -> str:
     if chat_id:
         return f"{base_url}/stream/{chat_id}/{message_id}{token_param}"
     return f"{base_url}/stream/{message_id}{token_param}"
+
+
+def stream_identity(url: str) -> tuple[str | None, int] | None:
+    """比较实际来源，忽略 URL 的鉴权 Token；不接受其他路由。"""
+    try:
+        path = urlsplit(url).path
+    except ValueError:
+        return None
+    match = re.fullmatch(r"/stream/(-?\d+)/(\d+)", path)
+    if match:
+        return match.group(1), int(match.group(2))
+    match = re.fullmatch(r"/stream/(\d+)", path)
+    return (None, int(match.group(1))) if match else None
 
 
 def resolution_tag(width: int, height: int) -> str:
@@ -67,6 +83,9 @@ def compute_strm_path(
     year: int = None,
     episode_digits: int = 2,
     strm_subdir: str = None,
+    file_name: str = None,
+    caption: str = None,
+    chat_id: str | int = None,
 ) -> Optional[Path]:
     """计算 STRM 的目标目录与基础文件名（不含多版本后缀）。"""
     if not category:
@@ -74,6 +93,14 @@ def compute_strm_path(
 
     strm_dir = STRM_BASE_DIR / (strm_subdir or category)
     safe_name = f"msg_{message_id}"
+
+    if category == "18+":
+        code = resolve_jav_code(file_name, caption, title)
+        if code:
+            return strm_dir / code / f"{code}.strm"
+        if jav_code_conflict(file_name, caption):
+            safe_name = _sanitize_filename(f"TG{chat_id or 'unknown'}-m{message_id}")
+            return strm_dir / "未确认番号" / safe_name / f"{safe_name}.strm"
 
     if category in ("电视剧", "动漫", "海外剧", "18+"):
         if title:
@@ -98,8 +125,7 @@ def compute_strm_path(
             strm_dir = strm_dir / _sanitize_filename(_clean_title(title))
             safe_name = _sanitize_filename(_clean_title(title))
 
-    strm_dir.mkdir(parents=True, exist_ok=True)
-    return strm_dir / f"{safe_name}.strm"
+    return strm_dir / f"{_sanitize_filename(safe_name)}.strm"
 
 
 # 多版本候选后缀：先按分辨率分组（Emby/Jellyfin 同目录 `- 后缀` 命名会合并为多版本），
@@ -113,9 +139,34 @@ def _candidate_names(base: str, resolution: str) -> list[str]:
         names.append(f"{base} - {resolution}")
     names.extend(f"{base} {s}" for s in _VERSION_SUFFIXES)
     if resolution:
-        names.extend(f"{base} - {resolution} {n}" for n in
-                     (" 2", " 3", " 4", " 5", " 6", " 7", " 8", " 9"))
+        names.extend(f"{base} - {resolution} {n}" for n in range(2, 10))
     return names
+
+
+def _write_strm(path: Path, stream_url: str) -> None:
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", delete=False) as file:
+            temporary = Path(file.name)
+            file.write(stream_url)
+        temporary.chmod(0o644)
+        os.replace(temporary, path)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+def _jav_version_name(code: str, resolution: str, chat_id, message_id: int,
+                      file_name: str | None, caption: str | None) -> str:
+    labels = [_sanitize_filename(resolution, max_bytes=24) if resolution else "原画"]
+    text = f"{file_name or ''}\n{caption or ''}"
+    if re.search(r"中文字幕|中字|中文(?:硬|软)?字幕|CN[-_ ]?SUB", text, re.I):
+        labels.append("中文字幕")
+    if re.search(r"无码|無碼|破解|UNCENSORED|(?:最新)?流出", text, re.I):
+        labels.append("无码")
+    labels.append(f"TG{chat_id or 'unknown'}-m{message_id}")
+    return f"{code} - {' '.join(labels)}"
 
 
 def generate_strm(
@@ -130,54 +181,45 @@ def generate_strm(
     chat_id: str | int = None,
     resolution: str = None,
     overwrite: bool = False,
+    file_name: str = None,
+    caption: str = None,
 ) -> Optional[Path]:
     """生成 STRM 文件。
 
     多版本规则：
+    - JAV 按原始番号归入同一目录；第一版起统一为 `番号 - 版本 来源ID.strm`；
     - 目标文件已存在且内容（URL）一致 → 幂等复用，同一链接绝不重复入库；
     - 已存在但内容不同（另一条消息）→ 尝试 `名称 - 1080p.strm` 这类
       分辨率后缀，Emby/Jellyfin 会将同目录下的 `- 后缀` 文件识别为多版本；
     - 后缀也冲突 → 退化为 `- 2`、`- 3` 等序号，绝不覆盖已有版本。
-    overwrite=True 时（重生成流程）不同内容会原地覆盖，由调用方保证路径归属。
+    overwrite=True 时（重生成流程）允许更新 URL；JAV 仍需确认来源身份一致。
     """
     try:
-        if not category:
-            category = "unknown"
-
-        strm_dir = STRM_BASE_DIR / (strm_subdir or category)
-        safe_name = f"msg_{message_id}"
-
-        if category in ("电视剧", "动漫", "海外剧", "18+"):
-            if title:
-                clean = _sanitize_filename(_clean_title(title))
-                strm_dir = strm_dir / clean
-                if season:
-                    strm_dir = strm_dir / f"Season {season:02d}"
-                strm_dir.mkdir(parents=True, exist_ok=True)
-                if season and episode:
-                    clean = _clean_title(title)
-                    ep_str = f"E{int(episode):0{episode_digits}d}"
-                    safe_name = f"{clean}-S{int(season):02d}{ep_str}"
-                else:
-                    safe_name = _clean_title(title)
-            else:
-                strm_dir.mkdir(parents=True, exist_ok=True)
-
-        elif category == "电影":
-            if title:
-                clean = _clean_title(title)
-                folder_name = f"{clean} ({year})" if year else clean
-                safe_name = folder_name
-                strm_dir = strm_dir / _sanitize_filename(folder_name)
-            strm_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            if title:
-                strm_dir = strm_dir / _sanitize_filename(_clean_title(title))
-            strm_dir.mkdir(parents=True, exist_ok=True)
-            safe_name = _clean_title(title) if title else f"msg_{message_id}"
-
-        safe_name = _sanitize_filename(safe_name)
+        base_path = compute_strm_path(
+            message_id=message_id, category=category, title=title, season=season,
+            episode=episode, year=year, episode_digits=episode_digits,
+            strm_subdir=strm_subdir, file_name=file_name, caption=caption, chat_id=chat_id,
+        )
+        strm_dir, safe_name = base_path.parent, base_path.stem
+        strm_dir.mkdir(parents=True, exist_ok=True)
         stream_url = build_stream_url(chat_id, message_id)
+
+        code = resolve_jav_code(file_name, caption, title) if category == "18+" else None
+        if code:
+            # 第一版也必须带「目录名 - 版本」前缀，Emby 才会自动合并。
+            # 来源 ID 是稳定后缀：同分辨率、跨频道、超过 8 个版本都不会覆盖。
+            name = _jav_version_name(code, resolution or "", chat_id, message_id, file_name, caption)
+            chosen = strm_dir / f"{_sanitize_filename(name)}.strm"
+            if chosen.exists():
+                old_url = chosen.read_text(encoding="utf-8").strip()
+                if old_url == stream_url.strip():
+                    return chosen
+                if stream_identity(old_url) != stream_identity(stream_url):
+                    raise ValueError(f"STRM path belongs to another source: {chosen}")
+                if not overwrite:
+                    return chosen
+            _write_strm(chosen, stream_url)
+            return chosen
 
         candidates = _candidate_names(safe_name, resolution or "")
         chosen: Optional[Path] = None
@@ -199,7 +241,7 @@ def generate_strm(
             import secrets
             chosen = strm_dir / f"{_sanitize_filename(safe_name)} - {secrets.token_hex(4)}.strm"
 
-        chosen.write_text(stream_url, encoding="utf-8")
+        _write_strm(chosen, stream_url)
         logger.debug(f"Generated STRM: {chosen}")
         return chosen
 
@@ -217,6 +259,9 @@ def cleanup_duplicate_strms():
             original = f.parent / f"{base_name}.strm"
             if original.exists():
                 try:
+                    # 文件名相近不代表重复；不同链接是需要保留的版本。
+                    if f.read_text(encoding="utf-8").strip() != original.read_text(encoding="utf-8").strip():
+                        continue
                     f.unlink()
                     count += 1
                 except Exception as e:

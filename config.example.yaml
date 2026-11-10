@@ -1,20 +1,22 @@
 # ============================================
 # TG-Emby-Streamer 配置文件
 # ============================================
-# 将此文件重命名为 config.yaml 并修改参数
+# Docker 安装脚本自动在 runtime/config/config.yaml 生成实际配置。
+# 手动使用时复制此文件并修改参数；不要分享真实配置。
 # 所有配置也可通过环境变量覆盖（用于 Docker 部署）
 
 telegram:
   # Telegram API 凭据 (https://my.telegram.org)
-  api_id: 12345
-  api_hash: "your_api_hash_here"
-  phone: "+8612345678901"
+  api_id: 0
+  api_hash: ""
+  phone: ""
 
   # 可选：Session String（生成后自动填入，优先于 phone 登录）
   session_string: ""
 
   # 需要监控的频道 ID，逗号分隔
-  monitor_channels: "-1001668687022,-1002855500786"
+  # 首次 Docker 启动会从 channels.json 填入原频道清单与全部规则。
+  monitor_channels: ""
 
   # 自动监控间隔（分钟），每隔多久扫描一次频道的新消息
   monitor_interval_minutes: 10
@@ -23,47 +25,53 @@ proxy:
   # 是否启用代理（Telegram 部分地区需要）
   enabled: false
   scheme: socks5           # socks5 或 http
-  host: 127.0.0.1
-  port: 10808
+  # Docker 中 127.0.0.1 指容器自己，不是宿主机。
+  host: host.docker.internal
+  port: 7890
+  username: ""
+  password: ""
 
 server:
   # Web 服务监听地址
   host: 0.0.0.0
   port: 8001
 
-  # 外部访问地址（用于生成 STRM 文件中的流地址）
-  base_url: "http://your-domain.com:8001"
+  base_url: "http://localhost:8001"
 
-  # 内部访问地址（用于 Docker 内部或局域网）
-  local_url: "http://192.168.1.100:8001"
+  # STRM 实际使用这个地址；须能被 Emby 和直接播放的客户端访问。
+  # 安装脚本会要求填写服务器局域网 IP 或 HTTPS 域名。
+  local_url: "http://localhost:8001"
 
-  # 流媒体访问 Token（留空则不启用认证）
+  # 安装脚本自动生成；导入分享数据时会写入接收者自己的 Token。
   stream_token: ""
 
 storage:
   # 数据存储目录（数据库、缓存、下载文件）
-  data_dir: /app/data
+  data_dir: /app/config
 
-  # STRM 文件输出目录（Docker 内部路径，对应映射的 ./data/strm）
-  strm_dir: /app/data/strm
+  # 宿主机 runtime/strm -> 容器 /app/strm -> Emby /media/tg
+  strm_dir: /app/strm
 
-  # 缓存目录（Docker 内部路径，对应映射的 ./data/cache）
-  cache_dir: /app/data/cache
+  cache_dir: /app/cache
+  media_path: /app/cache/media
 
   # 内存缓存大小（MB）
   memory_cache_size_mb: 256
 
   # 磁盘缓存上限（GB）
-  disk_cache_max_gb: 50
+  disk_cache_max_gb: 20
+  prefetch_enabled: true
+  prefetch_chunks: 8
 
 database:
-  # 数据库连接 URL（Docker 内部路径，对应映射的 ./data/media.db）
-  url: "sqlite+aiosqlite:////app/data/media.db"
+  # 宿主机 runtime/config/media.db
+  url: "sqlite+aiosqlite:////app/config/media.db"
 
 auth:
   # Web 管理面板登录
   username: admin
-  password: "changeme"
+  # 安装脚本生成随机密码；手动部署也必须填写强密码。
+  password: ""
 
 bot:
   # 手动入库管理员用户 ID（逗号分隔多个）
@@ -99,6 +107,6 @@ emby:
   # Emby API Key（管理后台 → 高级 → API 密钥）
   api_key: ""
 
-# TMDB 刮削开关
+# 刮削开关；已有 NFO 和图片不需要重新刮削。
 enrich:
   enabled: true

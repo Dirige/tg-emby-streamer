@@ -24,6 +24,13 @@ async def init_db():
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_media_chat_message "
             "ON media (chat_id, message_id)"
         ))
+        # 新频道可选择安全入库；旧规则默认不变，不重新解释已入库来源。
+        try:
+            await conn.execute(sa_text(
+                "ALTER TABLE channel_rules ADD COLUMN strict_import BOOLEAN NOT NULL DEFAULT 0"
+            ))
+        except Exception:
+            pass
         for col, col_type in [
             ("parts", "VARCHAR"),
             ("tmdb_id", "INTEGER"),

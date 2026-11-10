@@ -71,7 +71,7 @@ async def find_movie(code: str) -> dict | None:
         if not isinstance(info, dict):
             info = {}
         # 搜索和详情都必须属于同一番号，不能将近似结果的图/演员配给本片。
-        if info.get("number") and _norm(info["number"]) != _norm(code):
+        if not info.get("number") or _norm(info["number"]) != _norm(code):
             logger.warning("MetaTube detail number mismatch for %s (%s)", code, path)
             continue
         cover = (
@@ -86,6 +86,10 @@ async def find_movie(code: str) -> dict | None:
             "number": item.get("number") or code,
             "title": info.get("title") or item.get("title") or "",
             "actors": info.get("actors") or [],
+            "overview": info.get("summary") or "",
+            "release_date": info.get("release_date") or "",
+            "genres": info.get("genres") or [],
+            "studio": info.get("maker") or "",
             "provider": provider,
             "id": mid,
             # 首选 metatube 本地代理封面（稳定、无防盗链），失败可用原生 URL 兜底

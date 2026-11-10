@@ -143,8 +143,10 @@ async def test_jav_enrichment_does_not_need_tmdb_and_prefers_file_code(monkeypat
     tmdb.assert_not_awaited()
     async with sessions() as session:
         assert (await session.get(Media, mid)).poster_path == str(metatube.poster_path("SSIS-740"))
+    # 库海报也应被纠正，但 Emby 再次改写库图片不能影响独立推送缓存。
+    assert legacy.read_bytes() == metatube.poster_path("SSIS-740").read_bytes()
+    legacy.write_bytes(b"\xff\xd8\xffEmby-incorrect-old-image")
     assert metatube.poster_path("SSIS-740").read_bytes() != legacy.read_bytes()
-    assert legacy.read_bytes() == b"\xff\xd8\xffEmby-incorrect-old-image"
 
 
 @pytest.mark.asyncio

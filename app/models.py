@@ -98,5 +98,6 @@ class ChannelRule(Base):
     filename_rule = Column(String, nullable=True)
     filename_template = Column(String, nullable=True)
     enabled = Column(Boolean, default=True)
+    strict_import = Column(Boolean, default=False, server_default="0", nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

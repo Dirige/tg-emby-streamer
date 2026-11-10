@@ -99,10 +99,10 @@ async def send_code(phone: str) -> dict:
         await _auth_client.connect()
         sent_code = await _auth_client.send_code(phone)
         _phone_code_hash = sent_code.phone_code_hash
-        logger.info(f"验证码已发送到 {phone}, phone_code_hash={_phone_code_hash}")
+        logger.info("Telegram 验证码已发送（不记录手机号或验证码 Hash）")
         return {"success": True, "message": "验证码已发送，请查看 Telegram 应用"}
     except Exception as e:
-        logger.error(f"发送验证码失败: {e}")
+        logger.error("发送验证码失败（%s）", type(e).__name__)
         if _auth_client:
             try:
                 await _auth_client.disconnect()
@@ -137,7 +137,7 @@ async def verify_code(phone: str, code: str) -> dict:
                 pass
             _client = None
 
-        logger.info(f"手机号 {phone} 登录成功, user_id={user.id}")
+        logger.info("Telegram 登录成功")
 
         if _auth_client:
             try:
@@ -165,7 +165,7 @@ async def verify_code(phone: str, code: str) -> dict:
     except PhoneCodeInvalid:
         return {"success": False, "message": "验证码错误", "need_password": False}
     except Exception as e:
-        logger.error(f"验证码校验失败: {e}")
+        logger.error("验证码校验失败（%s）", type(e).__name__)
         return {"success": False, "message": f"验证失败: {e}", "need_password": False}
 
 
@@ -188,7 +188,7 @@ async def check_password(password: str) -> dict:
                 pass
             _client = None
 
-        logger.info(f"两步验证通过, user_id={user.id}")
+        logger.info("Telegram 两步验证通过")
 
         if _auth_client:
             try:
@@ -200,7 +200,7 @@ async def check_password(password: str) -> dict:
 
         return {"success": True, "message": "登录成功", "user_id": user.id}
     except Exception as e:
-        logger.error(f"两步验证失败: {e}")
+        logger.error("两步验证失败（%s）", type(e).__name__)
         return {"success": False, "message": f"密码错误: {e}"}
 
 
@@ -228,7 +228,10 @@ async def test_connection() -> dict:
     try:
         if settings.proxy.enabled:
             s = socks_mod.socksocket()
-            s.set_proxy(socks_mod.SOCKS5, settings.proxy.hostname, settings.proxy.port)
+            proxy_type = socks_mod.HTTP if settings.proxy.scheme == "http" else socks_mod.SOCKS5
+            s.set_proxy(proxy_type, settings.proxy.hostname, settings.proxy.port,
+                        username=settings.proxy.username or None,
+                        password=settings.proxy.password or None)
             s.settimeout(15)
             s.connect(("api.telegram.org", 443))
             ctx = ssl.create_default_context()

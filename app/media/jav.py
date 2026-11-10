@@ -55,3 +55,21 @@ def detect_jav_code(*texts: str | None) -> str | None:
                     continue
                 return code
     return None
+
+
+def jav_code_conflict(file_name: str | None, caption: str | None) -> bool:
+    """原文件名和原说明明确指向不同番号时，不能自动合并或改号。"""
+    file_code = detect_jav_code(file_name)
+    caption_code = detect_jav_code(caption)
+    return bool(file_code and caption_code and file_code != caption_code)
+
+
+def resolve_jav_code(
+    file_name: str | None = None,
+    caption: str | None = None,
+    title: str | None = None,
+) -> str | None:
+    """入库/分组使用原始来源的番号，不使用 Emby 刮削后的片名。"""
+    if jav_code_conflict(file_name, caption):
+        return None
+    return detect_jav_code(file_name, caption, title)

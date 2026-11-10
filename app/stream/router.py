@@ -2,7 +2,7 @@ import re
 import logging
 from urllib.parse import quote
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from app.config import settings
 from app.database import async_session
 from app.models import Media
@@ -15,7 +15,7 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 每次最多返回 10MB
+MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 单次读取/内存响应上限；完整文件按块流式传输
 
 
 def parse_range_header(
@@ -33,6 +33,8 @@ def parse_range_header(
         raise HTTPException(status_code=416, detail="Range Not Satisfiable")
     if end is not None and end >= file_size:
         end = file_size - 1
+    if end is not None and end < start:
+        raise HTTPException(status_code=416, detail="Range Not Satisfiable")
     return start, end
 
 
@@ -108,48 +110,61 @@ async def serve_stream(
     range_header = request.headers.get("range")
     start, end = parse_range_header(range_header, file_size)
 
-    if end is None:
+    if not range_header:
+        # 无 Range 的 GET 必须声明并提供整个文件。只返回前 10MB 会让
+        # Emby 的代理/探测把它误判为完整小文件，无法读取 MP4 尾部 moov。
+        end = file_size - 1
+    elif end is None:
         end = min(start + MAX_RESPONSE_SIZE - 1, file_size - 1)
 
     content_length = end - start + 1
 
-    if is_multi:
-        data = await _fetch_multi_part_range(part_ids, client, start, content_length)
-    else:
-        downloader = CachedFileDownloader(client, chat_id, message_id)
+    if not is_multi:
         async def fetch_from_tg(offset: int, limit: int) -> bytes:
             return await downloader.download_chunk(offset, limit)
-        # 缓存键带频道维度，避免不同频道相同 message_id 串缓存
         stream_key = f"{chat_id}:{message_id}"
-        data = await cache.get_range(stream_key, start, content_length, fetch_from_tg)
-        prefetch_manager.schedule_prefetch(stream_key, start, file_size, fetch_from_tg)
 
-    actual_len = len(data)
+    async def read_range(offset: int, length: int) -> bytes:
+        if is_multi:
+            return await _fetch_multi_part_range(part_ids, client, offset, length)
+        # 缓存键带频道维度，避免不同频道相同 message_id 串缓存。
+        data = await cache.get_range(stream_key, offset, length, fetch_from_tg)
+        prefetch_manager.schedule_prefetch(stream_key, offset, file_size, fetch_from_tg)
+        return data
+
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Type": mime_type,
-        "Content-Length": str(actual_len),
+        "Content-Length": str(content_length),
         "Content-Disposition": (
             f"inline; filename*=UTF-8''{quote(file_name)}"
         ),
     }
-
     if range_header:
-        headers["Content-Range"] = f"bytes {start}-{start + actual_len - 1}/{file_size}"
-        return Response(
-            content=data, status_code=206, headers=headers, media_type=mime_type
-        )
-    else:
-        return Response(
-            content=data,
-            status_code=200,
-            headers={
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(actual_len),
-                "Content-Type": mime_type,
-            },
-            media_type=mime_type,
-        )
+        headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+    status_code = 206 if range_header else 200
+
+    if content_length > MAX_RESPONSE_SIZE:
+        async def stream_body():
+            offset = start
+            remaining = content_length
+            while remaining > 0:
+                length = min(remaining, MAX_RESPONSE_SIZE)
+                data = await read_range(offset, length)
+                if not data:
+                    raise RuntimeError("Telegram 未返回预计的完整分片，传输中断")
+                yield data
+                offset += len(data)
+                remaining -= len(data)
+
+        # StreamingResponse 的背压/断开取消防止整部影片进入内存或继续下载。
+        return StreamingResponse(stream_body(), status_code=status_code, headers=headers, media_type=mime_type)
+
+    data = await read_range(start, content_length)
+    headers["Content-Length"] = str(len(data))
+    if range_header:
+        headers["Content-Range"] = f"bytes {start}-{start + len(data) - 1}/{file_size}"
+    return Response(content=data, status_code=status_code, headers=headers, media_type=mime_type)
 
 
 async def _fetch_multi_part_range(

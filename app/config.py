@@ -29,6 +29,8 @@ ENV_TO_KEY = {
     "PROXY_SCHEME": "proxy.scheme",
     "PROXY_HOST": "proxy.host",
     "PROXY_PORT": "proxy.port",
+    "PROXY_USERNAME": "proxy.username",
+    "PROXY_PASSWORD": "proxy.password",
     "STREAM_HOST": "server.host",
     "STREAM_PORT": "server.port",
     "BASE_URL": "server.base_url",
@@ -271,15 +273,21 @@ class ProxySettings:
         self.scheme: str = str(d.get("scheme", "socks5"))
         self.hostname: str = str(d.get("host", "127.0.0.1"))
         self.port: int = int(d.get("port", 10808))
+        self.username: str = str(d.get("username", ""))
+        self.password: str = str(d.get("password", ""))
 
     def to_dict(self) -> dict | None:
         if not self.enabled:
             return None
-        return {
+        proxy = {
             "scheme": self.scheme,
             "hostname": self.hostname,
             "port": self.port,
         }
+        if self.username:
+            proxy["username"] = self.username
+            proxy["password"] = self.password
+        return proxy
 
 
 class StreamSettings:

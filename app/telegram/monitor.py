@@ -6,13 +6,17 @@ from app.database import async_session
 from app.models import Media, ChannelRule, Category
 from app.media.parser import parse_media_info
 from app.media.strm import generate_strm, resolution_tag
+from app.media.jav import jav_code_conflict, resolve_jav_code
+from app.media.nfo_generator import SOURCE_ONLY_CATEGORIES, generate_jav_record_nfo, generate_source_record_nfo
 from app.telegram.client import get_client
-from sqlalchemy import select
+from sqlalchemy import select, func, literal, or_
+from sqlalchemy.exc import IntegrityError
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 MIN_DURATION_SECONDS = 300
+EXPLICIT_PART_NAME = re.compile(r"(?:^|[^A-Za-z])part\s*0*\d+", re.I)
 
 
 def is_video_message(message) -> bool:
@@ -80,6 +84,16 @@ def _build_scan_notify(ch_name: str, count: int, category: str, items: list[dict
     return build_scan_notify(ch_name, count, category, items)
 
 
+async def _source_is_saved(channel_id: int, message_id: int) -> bool:
+    async with async_session() as session:
+        parts = literal(",") + func.coalesce(Media.parts, "") + literal(",")
+        result = await session.execute(select(Media.id).where(
+            Media.chat_id == str(channel_id),
+            or_(Media.message_id == message_id, parts.contains(f",{message_id},")),
+        ).limit(1))
+        return result.scalar_one_or_none() is not None
+
+
 async def _merge_part_record(channel_id: int, display_name: str, message_id: int, media, duration: int) -> tuple[bool, int | None]:
     """尝试把 part>1 分片合并进已有的主记录。
 
@@ -90,24 +104,30 @@ async def _merge_part_record(channel_id: int, display_name: str, message_id: int
             select(Media).where(
                 Media.chat_id == str(channel_id),
                 Media.title == display_name,
-                Media.parts.is_(None),
             ).limit(1)
         )
         base_record = existing.scalar_one_or_none()
         if not base_record:
             return False, None
-        old_parts = base_record.parts or ""
-        base_record.parts = (old_parts + "," + str(message_id)).strip(",")
+        parts = (base_record.parts or "").split(",")
+        if str(message_id) in parts:
+            return True, None
+        base_record.parts = ",".join([part for part in parts if part] + [str(message_id)])
         base_record.size = (base_record.size or 0) + (media.file_size or 0)
         base_record.duration = (base_record.duration or 0) + duration
         await session.commit()
         return True, base_record.id
 
 
-async def refresh_library_async():
+async def refresh_library_async(media_ids: list[int] | None = None):
     from app.media.emby_notifier import refresh_library
     try:
-        await refresh_library()
+        codes = []
+        if media_ids:
+            async with async_session() as session:
+                records = (await session.execute(select(Media).where(Media.id.in_(media_ids), Media.category == "18+"))).scalars().all()
+                codes = [resolve_jav_code(record.file_name, record.caption, record.title) for record in records]
+        await refresh_library(jav_codes=[code for code in codes if code])
     except Exception as e:
         logger.warning(f"Emby refresh 异常: {e}")
 
@@ -127,6 +147,7 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
         if not rule or not rule.enabled:
             return {"success": False, "message": f"频道 {channel_id} 未配置规则或规则未启用"}
 
+        strict_import = bool(getattr(rule, "strict_import", False))
         episode_digits = 3 if rule.category == "动漫" else 2
         strm_subdir = await _get_strm_subdir(rule.category)
         count = 0
@@ -147,6 +168,28 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
             fn = media.file_name or f"video_{message.id}.mp4"
             caption = message.caption or ""
 
+            # 安全校验仅用于明确启用它的新规则。分段不进入不可靠的旧字节拼接，
+            # 已有原生分段文件、旧规则和所有既有来源保持不变。
+            skip_reason = ""
+            if strict_import:
+                if duration <= 0:
+                    skip_reason = "时长未知"
+                elif EXPLICIT_PART_NAME.search(fn):
+                    skip_reason = "未验证的分段来源"
+                elif jav_code_conflict(fn, caption):
+                    skip_reason = "原文件名和说明的番号冲突"
+            if skip_reason:
+                logger.info("安全校验跳过 chat=%s msg=%s: %s", channel_id, message.id, skip_reason)
+                if item_callback:
+                    item_callback(title=fn, category=rule.category, strm_path=None,
+                                  action="skipped", message=skip_reason)
+                continue
+
+            if await _source_is_saved(channel_id, message.id):
+                if item_callback:
+                    item_callback(title=fn, category=rule.category, strm_path=None, action="skipped", message="已存在")
+                continue
+
             info = parse_media_info(
                 caption=caption,
                 title_rule=rule.title_rule,
@@ -158,6 +201,18 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 filename=fn,
                 filename_rule=rule.filename_rule,
             )
+
+            if strict_import:
+                title = info.get("title") if info else None
+                if title and rule.category == "18+":
+                    title = resolve_jav_code(fn, caption, title)
+                if not title:
+                    if item_callback:
+                        item_callback(title=fn, category=rule.category, strm_path=None,
+                                      action="skipped", message="规则未匹配到可靠标题/番号")
+                    logger.info("安全校验跳过未匹配标题 chat=%s msg=%s", channel_id, message.id)
+                    continue
+                info["title"] = title
 
             if info and info.get("title"):
                 title = info["title"]
@@ -190,6 +245,8 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 deferred_parts.append(dict(
                     message_id=message.id, chat_id=str(channel_id),
                     file_name=fn, caption=caption, title=title,
+                    file_id=getattr(media, "file_id", None),
+                    file_unique_id=getattr(media, "file_unique_id", None),
                     display_name=display_name, source_link=source_link,
                     part_num=part_num, info=info,
                     file_size=media.file_size or 0, duration=duration,
@@ -199,18 +256,7 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 ))
                 continue
 
-            strm_path = generate_strm(
-                message_id=message.id,
-                chat_id=str(channel_id),
-                category=rule.category,
-                title=title,
-                season=info.get("season") if info else None,
-                episode=info.get("episode") if info else None,
-                year=info.get("year") if info else None,
-                episode_digits=episode_digits,
-                strm_subdir=strm_subdir,
-                resolution=resolution_tag(getattr(media, "width", 0) or 0, getattr(media, "height", 0) or 0),
-            )
+            strm_path = None
 
             # 去重 + 插入在同一个 session 里完成：
             # (chat_id, message_id) 唯一约束兜底，同一条消息绝不重复入库
@@ -252,8 +298,29 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 )
                 session.add(record)
                 try:
+                    await session.flush()
+                    strm_path = generate_strm(
+                        message_id=message.id, chat_id=str(channel_id), category=rule.category,
+                        title=title, season=info.get("season") if info else None,
+                        episode=info.get("episode") if info else None, year=info.get("year") if info else None,
+                        episode_digits=episode_digits, strm_subdir=strm_subdir,
+                        resolution=resolution_tag(record.width, record.height), file_name=fn, caption=caption,
+                    )
+                    if strm_path is None:
+                        raise OSError("STRM 生成失败")
+                    record.strm_path = str(strm_path)
+                    if rule.category == "18+" and resolve_jav_code(fn, caption, display_name):
+                        nfo = generate_jav_record_nfo(record)
+                        if not nfo.get("success"):
+                            raise OSError(nfo.get("reason"))
+                        record.nfo_path = nfo["nfo_path"]
+                    elif rule.category in SOURCE_ONLY_CATEGORIES:
+                        nfo = generate_source_record_nfo(record)
+                        if not nfo.get("success"):
+                            raise OSError(nfo.get("reason"))
+                        record.nfo_path = nfo["nfo_path"]
                     await session.commit()
-                except Exception:
+                except IntegrityError:
                     # 并发/重复竞争：唯一索引兜底
                     await session.rollback()
                     if item_callback:
@@ -264,6 +331,12 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                             action="skipped",
                             message="已存在",
                         )
+                    continue
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning("入库失败 chat=%s msg=%s: %s", channel_id, message.id, exc)
+                    if item_callback:
+                        item_callback(title=fn, category=rule.category, strm_path=None, action="error", message="STRM/NFO 写入失败")
                     continue
                 enrich_ids.append(record.id)
                 count += 1
@@ -282,24 +355,17 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 })
 
         for dp in deferred_parts:
-            strm_path = generate_strm(
-                message_id=dp["message_id"],
-                chat_id=dp["chat_id"],
-                category=rule.category,
-                title=dp["title"],
-                season=dp["info"].get("season") if dp["info"] else None,
-                episode=dp["info"].get("episode") if dp["info"] else None,
-                year=dp["info"].get("year") if dp["info"] else None,
-                episode_digits=episode_digits,
-                strm_subdir=strm_subdir,
-                resolution=resolution_tag(dp["width"], dp["height"]),
-            )
+            if await _source_is_saved(channel_id, dp["message_id"]):
+                continue
+            strm_path = None
             async with async_session() as session:
                 record = Media(
                     message_id=dp["message_id"],
                     chat_id=dp["chat_id"],
                     file_name=dp["file_name"],
                     caption=dp["caption"],
+                    file_id=dp["file_id"],
+                    file_unique_id=dp["file_unique_id"],
                     size=dp["file_size"],
                     duration=dp["duration"],
                     mime_type=dp["mime_type"],
@@ -313,9 +379,30 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                 )
                 session.add(record)
                 try:
+                    await session.flush()
+                    strm_path = generate_strm(
+                        message_id=dp["message_id"], chat_id=dp["chat_id"], category=rule.category,
+                        title=dp["title"], season=dp["info"].get("season") if dp["info"] else None,
+                        episode=dp["info"].get("episode") if dp["info"] else None,
+                        year=dp["info"].get("year") if dp["info"] else None,
+                        episode_digits=episode_digits, strm_subdir=strm_subdir,
+                        resolution=resolution_tag(dp["width"], dp["height"]), file_name=dp["file_name"], caption=dp["caption"],
+                    )
+                    if strm_path is None:
+                        raise OSError("STRM 生成失败")
+                    record.strm_path = str(strm_path)
+                    if rule.category == "18+" and resolve_jav_code(dp["file_name"], dp["caption"], dp["title"]):
+                        nfo = generate_jav_record_nfo(record)
+                        if not nfo.get("success"):
+                            raise OSError(nfo.get("reason"))
+                        record.nfo_path = nfo["nfo_path"]
                     await session.commit()
-                except Exception:
+                except IntegrityError:
                     await session.rollback()
+                    continue
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning("分片入库失败 chat=%s msg=%s: %s", channel_id, dp["message_id"], exc)
                     continue
                 enrich_ids.append(record.id)
                 count += 1
@@ -354,7 +441,7 @@ async def scan_channel(channel_id: int, limit: int = 200, notify_detailed: bool 
                     )
                 asyncio.create_task(_send_notify(notify_text))
                 if settings.emby.url and settings.emby.api_key:
-                    asyncio.create_task(refresh_library_async())
+                    asyncio.create_task(refresh_library_async(enrich_ids))
         return {"success": True, "message": f"频道 {ch_name} 扫描完成，新增 {count} 条记录"}
 
     except ConnectionError as e:
